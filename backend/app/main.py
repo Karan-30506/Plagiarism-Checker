@@ -1,15 +1,13 @@
-# backend/app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import auth
+from app.routes import auth, upload
 
 app = FastAPI(
-    title="Plagiarism Checker API",
-    description="FastAPI Backend Orchestrator for C++ Plagiarism Engine",
+    title="Plagiarism Engine API",
+    description="Dual-Stream C++ Data Structures Plagiarism Engine",
     version="1.0.0"
 )
 
-# Enable CORS for Streamlit Frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,9 +16,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register Routes
+# Register API Routers
 app.include_router(auth.router)
+app.include_router(upload.router)
 
 @app.get("/")
 def root():
-    return {"status": "online", "message": "Plagiarism Checker Backend is running"}
+    return {"status": "online", "engine": "FastAPI + C++ Core"}

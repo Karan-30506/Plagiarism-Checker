@@ -1,7 +1,11 @@
 import streamlit as st
+import requests
 import os
+import extra_streamlit_components as stx
 
-# Page Configuration
+API_BASE_URL = "http://localhost:8000/api"
+
+# --- PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="Plagiarism Engine Platform",
     page_icon="🔎",
@@ -9,32 +13,51 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Load Custom CSS Stylesheet
+# --- LOAD CATPPUCCIN MOCHA CUSTOM CSS ---
 css_path = os.path.join(os.path.dirname(__file__), "styles", "custom.css")
 if os.path.exists(css_path):
-    with open(css_path) as f:
+    with open(css_path, "r", encoding="utf-8") as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
-# Import Application Components
 from components.auth_ui import render_auth_ui
-from components.metrics import render_metric_cards
-from components.top_k_table import render_top_k_table
-from components.diff_viewer import render_diff_viewer
 from components.collusion_graph import render_collusion_graph
 
-# Session State Initialization
+# --- COOKIE MANAGER FOR PERSISTENT AUTHENTICATION ---
+cookie_manager = stx.CookieManager()
+
+# --- SESSION STATE INITIALIZATION ---
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
-if "user_documents" not in st.session_state:
-    st.session_state["user_documents"] = []
-if "last_analysis" not in st.session_state:
-    st.session_state["last_analysis"] = None
-if "selected_match" not in st.session_state:
-    st.session_state["selected_match"] = None
+if "user_token" not in st.session_state:
+    st.session_state["user_token"] = None
+if "user_email" not in st.session_state:
+    st.session_state["user_email"] = None
+if "uploader_key" not in st.session_state:
+    st.session_state["uploader_key"] = 0
+if "last_ingested_results" not in st.session_state:
+    st.session_state["last_ingested_results"] = None
 
-# Sidebar Header & Navigation
+# --- AUTO-LOGIN PERSISTENCE CHECK FROM BROWSER COOKIES ---
+saved_token = cookie_manager.get(cookie="auth_token")
+saved_email = cookie_manager.get(cookie="user_email")
+saved_id = cookie_manager.get(cookie="user_id")
+
+if saved_token and saved_email and not st.session_state["authenticated"]:
+    st.session_state["authenticated"] = True
+    st.session_state["user_token"] = saved_token
+    st.session_state["user_email"] = saved_email
+    st.session_state["user_id"] = saved_id
+
+# Navigation callbacks
+def navigate_to_vault():
+    st.session_state["nav_selection"] = "💾 Storage Vault"
+
+def navigate_to_inspection():
+    st.session_state["nav_selection"] = "📊 Plagiarism Inspection"
+
+# --- SIDEBAR & NAVIGATION ---
 st.sidebar.markdown("## 🔎 Plagiarism Engine")
-st.sidebar.caption("Two-Tier Huffman & Winnowing Core")
+st.sidebar.caption("Two-Tier C++ Ingestion Architecture")
 
 if st.session_state["authenticated"]:
     st.sidebar.markdown(f"👤 **Logged in as:**\n`{st.session_state.get('user_email', 'User')}`")
@@ -42,183 +65,309 @@ if st.session_state["authenticated"]:
     
     page = st.sidebar.radio(
         "Navigation",
-        ["📤 Document Upload & Check", "📊 Plagiarism & Diff Inspection", "🕸️ Collusion Analysis Graph", "💾 Storage Vault"]
+        ["📤 Document Ingestion", "💾 Storage Vault", "📊 Plagiarism Inspection", "🕸️ Collusion Analysis"],
+        key="nav_selection"
     )
     
     st.sidebar.divider()
     if st.sidebar.button("🚪 Sign Out", use_container_width=True):
+        # Clear persistent browser cookies
+        cookie_manager.delete("auth_token", key="del_token")
+        cookie_manager.delete("user_email", key="del_email")
+        cookie_manager.delete("user_id", key="del_id")
+        
         st.session_state["authenticated"] = False
-        st.session_state["user_documents"] = []
-        st.session_state["last_analysis"] = None
-        st.session_state["selected_match"] = None
+        st.session_state["user_token"] = None
+        st.session_state["user_email"] = None
+        st.session_state["last_ingested_results"] = None
         st.rerun()
 else:
     page = "Auth"
 
+def get_auth_headers():
+    token = st.session_state.get("user_token")
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+# --- MODAL COMPONENT 1: VIEW CONTENT ---
+def render_document_modal_content(doc_id: str, filename: str):
+    st.caption(f"Document UUID: `{doc_id}` | Bucket: `Supabase Storage (compressed_docs)`")
+    with st.spinner("Downloading binary payload & executing C++ Huffman Decompression..."):
+        try:
+            res = requests.get(f"{API_BASE_URL}/documents/{doc_id}/content", headers=get_auth_headers(), timeout=15)
+            if res.status_code == 200:
+                data = res.json()
+                orig_kb = data["original_size"] / 1024
+                comp_kb = data["compressed_size"] / 1024
+                savings = ((data["original_size"] - data["compressed_size"]) / data["original_size"] * 100) if data["original_size"] > 0 else 0.0
+                
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Original Size", f"{orig_kb:.2f} KB")
+                c2.metric("Cold Storage (.bin)", f"{comp_kb:.2f} KB")
+                c3.metric("Huffman Compression", f"{savings:.1f}% Saved")
+                
+                st.divider()
+                st.markdown(f"**Filename:** `{filename}`")
+                
+                ext = filename.split(".")[-1].lower() if "." in filename else "text"
+                lang_map = {
+                    "cpp": "cpp", "hpp": "cpp", "c": "c", "h": "c", 
+                    "py": "python", "java": "java", "cs": "csharp", 
+                    "js": "javascript", "ts": "typescript", "sql": "sql", 
+                    "json": "json", "html": "html", "css": "css"
+                }
+                st.code(data["content"], language=lang_map.get(ext, "text"), line_numbers=True)
+            else:
+                st.error(f"Failed to fetch content: {res.json().get('detail', 'Server error')}")
+        except Exception as e:
+            st.error(f"Backend Connection Error: {str(e)}")
+
+# --- MODAL COMPONENT 2: RENAME DOCUMENT ---
+def render_rename_modal_content(doc_id: str, current_filename: str):
+    st.markdown("### ✏️ Rename Document")
+    st.caption(f"Updating database record for `{current_filename}`")
+    
+    new_name = st.text_input("New Filename", value=current_filename, key=f"input_rename_{doc_id}")
+    
+    if st.button("💾 Save Changes", type="primary", use_container_width=True):
+        if not new_name.strip():
+            st.error("Filename cannot be empty.")
+        else:
+            try:
+                res = requests.patch(
+                    f"{API_BASE_URL}/documents/{doc_id}",
+                    headers=get_auth_headers(),
+                    json={"new_filename": new_name.strip()},
+                    timeout=10
+                )
+                if res.status_code == 200:
+                    st.success("Filename updated!")
+                    st.rerun()
+                else:
+                    st.error(f"Update failed: {res.json().get('detail', 'Error')}")
+            except Exception as e:
+                st.error(f"Error connecting to backend: {str(e)}")
+
+# Bind Dialogs safely
+if hasattr(st, "dialog"):
+    @st.dialog("📄 Decompressed Document Content", width="large")
+    def open_view_modal(doc_id: str, filename: str):
+        render_document_modal_content(doc_id, filename)
+
+    @st.dialog("✏️ Edit Document Name", width="medium")
+    def open_rename_modal(doc_id: str, current_filename: str):
+        render_rename_modal_content(doc_id, current_filename)
+else:
+    def open_view_modal(doc_id: str, filename: str): pass
+    def open_rename_modal(doc_id: str, current_filename: str): pass
+
+
 # --- ROUTING LOGIC ---
 
 if not st.session_state["authenticated"]:
-    render_auth_ui()
+    render_auth_ui(cookie_manager)
 
-elif page == "📤 Document Upload & Check":
-    st.title("📤 Document Ingestion & Batch Check")
-    st.caption("Upload source files or .ZIP archives for Winnowing fingerprinting and Huffman cold compression.")
+# -----------------------------------------------------------------------------
+# PAGE 1: DOCUMENT INGESTION
+# -----------------------------------------------------------------------------
+elif page == "📤 Document Ingestion":
+    st.title("📤 Document Ingestion Pipeline")
+    st.caption("Upload source code, text documents, or submission archives (.ZIP) for simultaneous C++ Huffman compression and Winnowing fingerprinting.")
+    
+    uploader_key = f"file_uploader_{st.session_state['uploader_key']}"
     
     uploaded_files = st.file_uploader(
-        "Drop single files, multiple source code documents, or a .ZIP submission archive",
-        type=["cpp", "hpp", "c", "h", "py", "java", "txt", "zip"],
-        accept_multiple_files=True
+        "Drop files or a .ZIP archive for dual-stream processing",
+        type=["cpp", "hpp", "c", "h", "py", "java", "cs", "js", "ts", "html", "css", "txt", "md", "sql", "json", "pdf", "docx", "zip"],
+        accept_multiple_files=True,
+        key=uploader_key
     )
     
-    col1, col2 = st.columns([2, 1])
+    col1, col2 = st.columns([2.5, 1])
     
     with col1:
         if uploaded_files:
-            st.success(f"📁 {len(uploaded_files)} file(s) loaded into ingestion buffer.")
-            file_details = []
-            total_raw_bytes = 0
-            for f in uploaded_files:
-                file_details.append({"Filename": f.name, "Size (Bytes)": f.size, "Type": f.type or "Text/Source"})
-                total_raw_bytes += f.size
-                
-            st.dataframe(file_details, use_container_width=True)
+            st.success(f"📁 **{len(uploaded_files)} file(s)** staged in ingestion buffer.")
             
-            if st.button("🚀 Process Batch & Run Plagiarism Analysis", type="primary", use_container_width=True):
-                with st.spinner("Processing documents through Winnowing & Huffman Compression..."):
-                    # Store uploaded documents in session state
-                    processed_docs = []
-                    for f in uploaded_files:
-                        raw_content = f.getvalue().decode("utf-8", errors="ignore")
-                        processed_docs.append({
-                            "filename": f.name,
-                            "size_bytes": f.size,
-                            "content": raw_content
-                        })
-                    st.session_state["user_documents"].extend(processed_docs)
-                    
-                    # Store analysis output
-                    st.session_state["last_analysis"] = {
-                        "max_similarity": 0.0 if len(st.session_state["user_documents"]) < 2 else 68.4,
-                        "orig_bytes": total_raw_bytes,
-                        "comp_bytes": int(total_raw_bytes * 0.42),
-                        "fingerprint_count": max(12, len(uploaded_files) * 85),
-                        "matches": [] if len(st.session_state["user_documents"]) < 2 else [
-                            {
-                                "filename": st.session_state["user_documents"][0]["filename"],
-                                "similarity_score": 68.4,
-                                "matched_hash_count": 142,
-                                "total_hashes": 208,
-                                "source_code": st.session_state["user_documents"][-1]["content"],
-                                "target_code": st.session_state["user_documents"][0]["content"]
-                            }
-                        ],
-                        "nodes": [
-                            {"id": doc["filename"], "label": doc["filename"], "cluster_id": 1}
-                            for doc in st.session_state["user_documents"]
-                        ],
-                        "edges": [
-                            {"source": st.session_state["user_documents"][0]["filename"], 
-                             "target": st.session_state["user_documents"][-1]["filename"], 
-                             "weight": 68.4}
-                        ] if len(st.session_state["user_documents"]) >= 2 else []
-                    }
-                    st.success("Batch ingestion complete! Switch to 'Plagiarism & Diff Inspection' to view results.")
-        else:
-            if not st.session_state["user_documents"]:
-                st.info("No documents uploaded yet in this session.")
+            staged_info = []
+            for f in uploaded_files:
+                staged_info.append({
+                    "Filename": f.name,
+                    "Size": f"{f.size / 1024:.2f} KB",
+                    "MIME Type": f.type or "Text/Source"
+                })
+            st.dataframe(staged_info, use_container_width=True)
+            
+            if st.button("🚀 Execute C++ Dual-Stream Ingestion", type="primary", use_container_width=True):
+                files_payload = [
+                    ("files", (f.name, f.getvalue(), f.type or "application/octet-stream"))
+                    for f in uploaded_files
+                ]
+                
+                with st.spinner("Processing: Running C++ Huffman Compression & Winnowing Fingerprinting..."):
+                    try:
+                        response = requests.post(
+                            f"{API_BASE_URL}/documents/upload",
+                            headers=get_auth_headers(),
+                            files=files_payload,
+                            timeout=60
+                        )
+                        if response.status_code == 200:
+                            data = response.json()
+                            st.balloons()
+                            st.session_state["last_ingested_results"] = data.get("documents", [])
+                            st.session_state["uploader_key"] += 1
+                            st.rerun()
+                        else:
+                            st.error(f"Ingestion Failed: {response.json().get('detail', 'Error')}")
+                    except requests.exceptions.RequestException as e:
+                        st.error(f"Backend Connection Error: {str(e)}")
+
+        if st.session_state["last_ingested_results"]:
+            st.success("✅ **Batch Ingestion Complete!** Staged buffer cleared and records persisted.")
+            st.markdown("### ⚡ Latest Ingestion Stream Results")
+            
+            formatted_results = []
+            for doc in st.session_state["last_ingested_results"]:
+                orig_sz = doc["original_size"]
+                comp_sz = doc["compressed_size"]
+                savings = ((orig_sz - comp_sz) / orig_sz * 100) if orig_sz > 0 else 0.0
+                
+                formatted_results.append({
+                    "Document ID": doc["document_id"][:8] + "...",
+                    "Filename": doc["filename"],
+                    "Original Size": f"{orig_sz / 1024:.2f} KB",
+                    "Compressed (.bin)": f"{comp_sz / 1024:.2f} KB",
+                    "Huffman Savings": f"{savings:.1f}%",
+                    "Winnowing Hashes": doc["fingerprint_count"],
+                    "Status": "Persisted in Postgres & Storage"
+                })
+            
+            st.dataframe(formatted_results, use_container_width=True)
+            
+            btn_c1, btn_c2 = st.columns(2)
+            btn_c1.button("💾 View Storage Vault Records", on_click=navigate_to_vault, use_container_width=True)
+            btn_c2.button("📊 Proceed to Plagiarism Inspection", on_click=navigate_to_inspection, use_container_width=True)
 
     with col2:
         st.info("""
-        **Ingestion Pipeline Steps:**
-        1. **Text Normalization:** Strips whitespaces, comments & boilerplate.
-        2. **Winnowing Engine:** Computes rolling hashes with window $w$ and noise $k$.
-        3. **Huffman Tree:** Compresses text into binary `.bin` cold archival storage.
-        4. **Hot Trie Index:** Queries compressed radix trie in PostgreSQL for candidate matching.
+        **Dual-Stream Ingestion Flow:**
+        
+        1. **Text Normalization:** Strips comments, whitespaces & extracts text from PDF/DOCX/ZIP.
+        2. **Stream A (Huffman):** Constructs Min-Heap prefix tree & packs text into binary `.bin` uploaded to Supabase Storage.
+        3. **Stream B (Winnowing):** Generates Rabin-Karp rolling hashes & picks window minima inserted into PostgreSQL.
         """)
 
-elif page == "📊 Plagiarism & Diff Inspection":
-    st.title("📊 Plagiarism Inspection & Code Diffs")
-    
-    analysis = st.session_state.get("last_analysis")
-    
-    if not analysis or not st.session_state["user_documents"]:
-        st.markdown("""
-            <div class="empty-state-card">
-                <div class="empty-state-icon">📊</div>
-                <div class="empty-state-title">No Analysis Results Available</div>
-                <div class="empty-state-desc">You have not processed any documents yet. Please go to <b>Document Upload & Check</b> to submit files for plagiarism inspection.</div>
-            </div>
-        """, unsafe_allow_html=True)
-    else:
-        render_metric_cards(
-            analysis["max_similarity"],
-            analysis["orig_bytes"],
-            analysis["comp_bytes"],
-            analysis["fingerprint_count"]
-        )
-        
-        st.divider()
-        
-        def handle_match_select(match):
-            st.session_state["selected_match"] = match
-
-        render_top_k_table(analysis.get("matches", []), on_select_match_callback=handle_match_select)
-        
-        st.divider()
-        
-        matches = analysis.get("matches", [])
-        if matches:
-            selected = st.session_state.get("selected_match") or matches[0]
-            render_diff_viewer(
-                source_filename="Latest Upload",
-                source_code=selected.get("source_code", ""),
-                matched_filename=selected.get("filename", "Corpus Match"),
-                matched_code=selected.get("target_code", ""),
-                matched_lines={2, 3, 4, 5, 6, 7, 8}
-            )
-        else:
-            render_diff_viewer("", "", "", "", set())
-
-elif page == "🕸️ Collusion Analysis Graph":
-    st.title("🕸️ Collusion Network Analysis")
-    st.caption("Disjoint Set Union (DSU) graph clustering highlighting peer-to-peer sharing rings.")
-    
-    analysis = st.session_state.get("last_analysis")
-    
-    if not analysis or not analysis.get("nodes"):
-        render_collusion_graph([], [])
-    else:
-        render_collusion_graph(analysis.get("nodes", []), analysis.get("edges", []))
-
+# -----------------------------------------------------------------------------
+# PAGE 2: STORAGE VAULT (VIEW, RENAME & DELETE)
+# -----------------------------------------------------------------------------
 elif page == "💾 Storage Vault":
-    st.title("💾 Storage & Archival Vault")
-    st.caption("Overview of cold compressed storage buckets vs hot database fingerprint indices.")
+    st.title("💾 Storage & Database Vault")
+    st.caption("Live metrics and records fetched from PostgreSQL tables and Supabase Storage bucket.")
     
-    user_docs = st.session_state.get("user_documents", [])
-    
-    if not user_docs:
-        st.markdown("""
-            <div class="empty-state-card">
-                <div class="empty-state-icon">💾</div>
-                <div class="empty-state-title">Storage Vault Empty</div>
-                <div class="empty-state-desc">No compressed documents found in your Supabase storage vault. Upload files to view cold archival and hot index metrics.</div>
-            </div>
-        """, unsafe_allow_html=True)
-    else:
-        total_bytes = sum(d["size_bytes"] for d in user_docs)
-        comp_bytes = int(total_bytes * 0.42)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Total Cold Storage (.bin)", f"{comp_bytes / 1024:.1f} KB", delta=f"-{((total_raw_bytes - comp_bytes)/total_bytes*100):.1f}% vs Raw Text" if total_bytes > 0 else "0%")
-            st.caption("Stored in Supabase Storage (`compressed-docs` bucket)")
-        with col2:
-            st.metric("Hot Fingerprint Hashes", f"{len(user_docs) * 120:,} Hashes", delta="Indexed in Postgres GIN")
-            st.caption("Indexed in PostgreSQL using Radix Compressed Trie")
+    with st.spinner("Fetching database records..."):
+        try:
+            res = requests.get(f"{API_BASE_URL}/documents/my-documents", headers=get_auth_headers(), timeout=10)
             
-        st.divider()
-        st.markdown("### 📜 Uploaded Document Records")
-        st.dataframe(
-            [{"Filename": d["filename"], "Original Size": f"{d['size_bytes']} B", "Status": "Compressed & Indexed"} for d in user_docs],
-            use_container_width=True
-        )
+            if res.status_code == 200:
+                docs = res.json()
+                
+                if not docs:
+                    st.markdown("""
+                        <div class="empty-state-card">
+                            <div class="empty-state-icon">💾</div>
+                            <div class="empty-state-title">Storage Vault Empty</div>
+                            <div class="empty-state-desc">No compressed documents found in your record. Go to <b>Document Ingestion</b> to upload files.</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    total_orig = sum(d["original_size"] for d in docs)
+                    total_comp = sum(d["compressed_size"] for d in docs)
+                    total_saved = max(0, total_orig - total_comp)
+                    savings_pct = (total_saved / total_orig * 100) if total_orig > 0 else 0.0
+                    
+                    # Storage Metrics Header
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Total Indexed Documents", f"{len(docs)} Files")
+                        st.caption("Persisted in PostgreSQL `documents` table")
+                    with col2:
+                        st.metric("Cold Storage Size (.bin)", f"{total_comp / 1024:.2f} KB", delta=f"-{savings_pct:.1f}% Savings")
+                        st.caption("Stored in Supabase `compressed_docs` bucket")
+                    with col3:
+                        st.metric("Total Raw Uncompressed Size", f"{total_orig / 1024:.2f} KB")
+                        st.caption(f"💾 {total_saved / 1024:.2f} KB total space saved")
+                    
+                    st.divider()
+                    st.markdown("### 📜 Persisted Document Inventory")
+                    
+                    # High-Legibility Column Headers
+                    header_cols = st.columns([1.5, 3.5, 1.8, 1.8, 1.8, 1.2, 1.2, 1.2])
+                    header_cols[0].markdown("<span class='vault-header-text'>ID</span>", unsafe_allow_html=True)
+                    header_cols[1].markdown("<span class='vault-header-text'>FILENAME</span>", unsafe_allow_html=True)
+                    header_cols[2].markdown("<span class='vault-header-text'>RAW SIZE</span>", unsafe_allow_html=True)
+                    header_cols[3].markdown("<span class='vault-header-text'>COMPRESSED</span>", unsafe_allow_html=True)
+                    header_cols[4].markdown("<span class='vault-header-text'>HUFFMAN SAVINGS</span>", unsafe_allow_html=True)
+                    header_cols[5].markdown("<span class='vault-header-text'>VIEW</span>", unsafe_allow_html=True)
+                    header_cols[6].markdown("<span class='vault-header-text'>EDIT</span>", unsafe_allow_html=True)
+                    header_cols[7].markdown("<span class='vault-header-text'>DELETE</span>", unsafe_allow_html=True)
+                    st.divider()
+                    
+                    # Row Rendering
+                    for idx, d in enumerate(docs, 1):
+                        orig = d["original_size"]
+                        comp = d["compressed_size"]
+                        sav = ((orig - comp) / orig * 100) if orig > 0 else 0.0
+                        
+                        r_col1, r_col2, r_col3, r_col4, r_col5, r_col6, r_col7, r_col8 = st.columns([1.5, 3.5, 1.8, 1.8, 1.8, 1.2, 1.2, 1.2])
+                        
+                        r_col1.markdown(f"<span class='vault-cell-text'><code>{d['id'][:8]}...</code></span>", unsafe_allow_html=True)
+                        r_col2.markdown(f"<span class='vault-cell-text'>📄 <b>{d['filename']}</b></span>", unsafe_allow_html=True)
+                        r_col3.markdown(f"<span class='vault-cell-text'><code>{orig:,} B</code></span>", unsafe_allow_html=True)
+                        r_col4.markdown(f"<span class='vault-cell-text'><code>{comp:,} B</code></span>", unsafe_allow_html=True)
+                        r_col5.markdown(f"<span class='badge-mocha-green'>-{sav:.1f}%</span>", unsafe_allow_html=True)
+                        
+                        # View Code
+                        if r_col6.button("👁️", key=f"btn_view_{d['id']}", help="View Decompressed Code"):
+                            open_view_modal(d["id"], d["filename"])
+                            
+                        # Rename Document
+                        if r_col7.button("✏️", key=f"btn_edit_{d['id']}", help="Rename Document"):
+                            open_rename_modal(d["id"], d["filename"])
+                            
+                        # Delete Document
+                        if r_col8.button("🗑️", key=f"btn_del_{d['id']}", help="Delete Document"):
+                            try:
+                                del_res = requests.delete(f"{API_BASE_URL}/documents/{d['id']}", headers=get_auth_headers(), timeout=10)
+                                if del_res.status_code == 200:
+                                    st.toast(f"Deleted {d['filename']}", icon="🗑️")
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to delete document.")
+                            except Exception as e:
+                                st.error(f"Error: {str(e)}")
+            else:
+                st.error("Failed to fetch document inventory from database.")
+        except requests.exceptions.RequestException as e:
+            st.error(f"Database Connection Error: {str(e)}")
+
+# -----------------------------------------------------------------------------
+# PAGE 3: PLAGIARISM INSPECTION
+# -----------------------------------------------------------------------------
+elif page == "📊 Plagiarism Inspection":
+    st.title("📊 Plagiarism Inspection & Code Diffs")
+    st.markdown("""
+        <div class="empty-state-card">
+            <div class="empty-state-icon">📊</div>
+            <div class="empty-state-title">Detection Engine Pending (Stage 2)</div>
+            <div class="empty-state-desc">Your uploaded documents have been successfully compressed via Huffman and fingerprinted via Winnowing into PostgreSQL.
+            <br><br>Candidate retrieval using <b>Compressed Radix Trie</b>, Top-K ranking using <b>Max-Binomial Heap</b>, and line diffs using <b>Suffix Tree & KMP</b> will be connected next.</div>
+        </div>
+    """, unsafe_allow_html=True)
+
+# -----------------------------------------------------------------------------
+# PAGE 4: COLLUSION ANALYSIS
+# -----------------------------------------------------------------------------
+elif page == "🕸️ Collusion Analysis":
+    st.title("🕸️ Collusion Network Analysis")
+    st.caption("Disjoint Set Union (DSU) peer-to-peer graph clustering.")
+    render_collusion_graph([], [])

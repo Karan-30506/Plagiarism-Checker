@@ -1,11 +1,12 @@
 import streamlit as st
 import requests
+import extra_streamlit_components as stx
 
 API_URL = "http://localhost:8000/api/auth"
 
-def render_auth_ui():
+def render_auth_ui(cookie_manager):
     st.markdown("<h2 style='text-align: center; margin-bottom: 1rem;'>🔒 Access Control</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #9ca3af;'>Log in or register to access the Plagiarism Analysis Platform</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #a6adc8;'>Log in or register to access the Plagiarism Analysis Platform</p>", unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 2, 1])
     
@@ -31,23 +32,26 @@ def render_auth_ui():
                             )
                             if res.status_code == 200:
                                 data = res.json()
+                                token = data["access_token"]
+                                user_id = data["user_id"]
+                                
+                                # Store session token in browser Cookie / localStorage
+                                cookie_manager.set("auth_token", token, key="set_token")
+                                cookie_manager.set("user_email", email, key="set_email")
+                                cookie_manager.set("user_id", user_id, key="set_id")
+                                
                                 st.session_state["authenticated"] = True
-                                st.session_state["user_token"] = data["access_token"]
-                                st.session_state["user_id"] = data["user_id"]
+                                st.session_state["user_token"] = token
+                                st.session_state["user_id"] = user_id
                                 st.session_state["user_email"] = email
+                                
                                 st.success("Logged in successfully!")
                                 st.rerun()
                             else:
                                 err_detail = res.json().get("detail", "Invalid credentials")
                                 st.error(f"Login Failed: {err_detail}")
-                        except Exception:
-                            # Mock Fallback for standalone frontend testing
-                            st.warning("⚠️ Backend server not reachable. Proceeding in Demo Mode.")
-                            st.session_state["authenticated"] = True
-                            st.session_state["user_token"] = "demo-token"
-                            st.session_state["user_id"] = "demo-user-uuid"
-                            st.session_state["user_email"] = email or "demo@example.com"
-                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Backend offline: {str(e)}")
 
         # --- SIGNUP TAB ---
         with tab_signup:
@@ -78,6 +82,5 @@ def render_auth_ui():
                             else:
                                 err_detail = res.json().get("detail", "Signup failed")
                                 st.error(f"Registration Error: {err_detail}")
-                        except Exception:
-                            st.warning("⚠️ Backend offline. Account created in Demo Mode.")
-                            st.success("Account registered! Switch to Login tab.")
+                        except Exception as e:
+                            st.error(f"Error: {str(e)}")

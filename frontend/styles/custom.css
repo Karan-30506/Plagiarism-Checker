@@ -1,4 +1,8 @@
-/* Custom Styling for Plagiarism Checker Frontend */
+/* Main Page Container */
+.stApp {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+}
 
 .main .block-container {
     padding-top: 1.8rem;
@@ -6,18 +10,24 @@
     max-width: 1280px;
 }
 
-/* Metric Cards */
+/* Sidebar Styling */
+section[data-testid="stSidebar"] {
+    background-color: #181825;
+    border-right: 1px solid #313244;
+}
+
+/* Catppuccin Metric Cards */
 .metric-card {
-    background-color: #1e222d;
-    border: 1px solid #2d3342;
+    background-color: #181825;
+    border: 1px solid #313244;
     border-radius: 12px;
     padding: 20px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
     transition: transform 0.2s ease, border-color 0.2s ease;
 }
 
 .metric-card:hover {
-    border-color: #6366f1;
+    border-color: #cba6f7;
     transform: translateY(-2px);
 }
 
@@ -26,34 +36,166 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: #9ca3af;
+    color: #a6adc8;
     margin-bottom: 6px;
 }
 
 .metric-value {
     font-size: 2.1rem;
     font-weight: 700;
-    color: #f3f4f6;
+    color: #cdd6f4;
 }
 
 .metric-sub {
     font-size: 0.8rem;
-    color: #10b981;
+    color: #a6e3a1;
     margin-top: 6px;
     font-weight: 500;
 }
 
 .metric-sub-warning {
     font-size: 0.8rem;
-    color: #ef4444;
+    color: #f38ba8;
     margin-top: 6px;
     font-weight: 500;
 }
 
-/* Empty State Container */
+/* Storage Vault Table Layout */
+.vault-table-header {
+    background-color: #181825;
+    border: 1px solid #313244;
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-weight: 700;
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #bac2de;
+    margin-bottom: 12px;
+}
+
+.vault-row-card {
+    background-color: #181825;
+    border: 1px solid #313244;
+    border-radius: 10px;
+    padding: 10px 16px;
+    margin-bottom: 8px;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.vault-row-card:hover {
+    background-color: #313244;
+    border-color: #89b4fa;
+}
+
+/* Modal Overlay Blur */
+div[data-testid="stDialog"] {
+    backdrop-filter: blur(12px) brightness(0.45);
+    background-color: rgba(17, 17, 27, 0.75) !important;
+}
+
+div[data-testid="stDialog"] > div {
+    background-color: #181825 !important;
+    border: 1px solid #45475a !important;
+    border-radius: 16px !important;
+    color: #cdd6f4 !important;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7) !important;
+}
+
+/* ==========================================================================
+   CATPPUCCIN MOCHA VS CODE SYNTAX HIGHLIGHTING (C, C++, Python, Java, JS, etc.)
+   ========================================================================== */
+
+/* Code Container Wrapper */
+div[data-testid="stCodeBlock"] {
+    background-color: #11111b !important;
+    border: 1px solid #313244 !important;
+    border-radius: 12px !important;
+    padding: 6px !important;
+}
+
+div[data-testid="stCodeBlock"] pre {
+    background-color: #11111b !important;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace !important;
+}
+
+div[data-testid="stCodeBlock"] code {
+    color: #cdd6f4 !important;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace !important;
+    font-size: 13.5px !important;
+    line-height: 1.6 !important;
+}
+
+/* Line Numbers */
+.stCodeBlock [data-testid="stCodeBlockLineNumber"],
+pre code .line-numbers-rows > span {
+    color: #585b70 !important;
+}
+
+/* Syntax Token Overrides for Prism.js */
+.token.comment, .token.prolog, .token.doctype, .token.cdata {
+    color: #6c7086 !important;
+    font-style: italic !important;
+}
+
+.token.keyword, .token.control, .token.directive, .token.important {
+    color: #cba6f7 !important; /* Mauve */
+    font-weight: 600 !important;
+}
+
+.token.string, .token.char, .token.attr-value, .token.regex {
+    color: #a6e3a1 !important; /* Green */
+}
+
+.token.function, .token.method {
+    color: #89b4fa !important; /* Blue */
+}
+
+.token.class-name, .token.type, .token.class {
+    color: #f9e2af !important; /* Yellow */
+}
+
+.token.number, .token.boolean, .token.constant {
+    color: #fab387 !important; /* Peach */
+}
+
+.token.macro, .token.preprocessor, .token.import, .token.builtin {
+    color: #f5e0dc !important; /* Flamingo */
+}
+
+.token.operator, .token.punctuation {
+    color: #89dceb !important; /* Sky */
+}
+
+.token.variable, .token.property, .token.parameter {
+    color: #f2cdcd !important;
+}
+
+/* Catppuccin Badges */
+.badge-mocha-green {
+    background-color: rgba(166, 227, 161, 0.15);
+    color: #a6e3a1;
+    border: 1px solid #a6e3a1;
+    padding: 3px 10px;
+    border-radius: 9999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.badge-mocha-mauve {
+    background-color: rgba(203, 166, 247, 0.15);
+    color: #cba6f7;
+    border: 1px solid #cba6f7;
+    padding: 3px 10px;
+    border-radius: 9999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+/* Empty State Card */
 .empty-state-card {
-    background-color: #0f172a;
-    border: 2px dashed #334155;
+    background-color: #181825;
+    border: 2px dashed #45475a;
     border-radius: 16px;
     padding: 48px 24px;
     text-align: center;
@@ -68,86 +210,14 @@
 .empty-state-title {
     font-size: 1.25rem;
     font-weight: 700;
-    color: #f8fafc;
+    color: #f5e0dc;
     margin-bottom: 8px;
 }
 
 .empty-state-desc {
     font-size: 0.9rem;
-    color: #94a3b8;
+    color: #a6adc8;
     max-width: 500px;
     margin: 0 auto;
     line-height: 1.5;
-}
-
-/* Code Diff Box */
-.diff-box {
-    background-color: #0b0f19;
-    border: 1px solid #1e293b;
-    border-radius: 10px;
-    padding: 16px;
-    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
-    font-size: 13px;
-    line-height: 1.6;
-    overflow-x: auto;
-    white-space: pre-wrap;
-    max-height: 520px;
-}
-
-.diff-line {
-    display: flex;
-    padding: 2px 8px;
-    border-radius: 4px;
-    margin-bottom: 2px;
-}
-
-.diff-line-number {
-    width: 40px;
-    color: #475569;
-    user-select: none;
-    text-align: right;
-    padding-right: 12px;
-}
-
-.diff-line-content {
-    flex: 1;
-}
-
-.diff-matched {
-    background-color: rgba(239, 68, 68, 0.18);
-    border-left: 3px solid #ef4444;
-    color: #fca5a5;
-}
-
-.diff-unmatched {
-    background-color: transparent;
-    color: #cbd5e1;
-}
-
-/* Badges */
-.badge-danger {
-    background-color: #7f1d1d;
-    color: #fecaca;
-    padding: 4px 10px;
-    border-radius: 9999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-}
-
-.badge-warning {
-    background-color: #78350f;
-    color: #fde68a;
-    padding: 4px 10px;
-    border-radius: 9999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-}
-
-.badge-success {
-    background-color: #064e3b;
-    color: #a7f3d0;
-    padding: 4px 10px;
-    border-radius: 9999px;
-    font-size: 0.75rem;
-    font-weight: 600;
 }

@@ -28,8 +28,20 @@ class Document(Base):
     created_at = Column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
 
     user = relationship("User", back_populates="documents")
-    source_reports = relationship("PlagiarismReport", foreign_keys="PlagiarismReport.source_doc_id", cascade="all, delete-orphan")
-    matched_reports = relationship("PlagiarismReport", foreign_keys="PlagiarismReport.matched_doc_id", cascade="all, delete-orphan")
+    
+    # Linked back_populates relationships to fix SQLAlchemy warnings
+    source_reports = relationship(
+        "PlagiarismReport", 
+        foreign_keys="PlagiarismReport.source_doc_id", 
+        back_populates="source_document",
+        cascade="all, delete-orphan"
+    )
+    matched_reports = relationship(
+        "PlagiarismReport", 
+        foreign_keys="PlagiarismReport.matched_doc_id", 
+        back_populates="matched_document",
+        cascade="all, delete-orphan"
+    )
 
 
 class PlagiarismReport(Base):
@@ -42,5 +54,5 @@ class PlagiarismReport(Base):
     matched_segments = Column(JSONB, default=[], nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
 
-    source_document = relationship("Document", foreign_keys=[source_doc_id])
-    matched_document = relationship("Document", foreign_keys=[matched_doc_id])
+    source_document = relationship("Document", foreign_keys=[source_doc_id], back_populates="source_reports")
+    matched_document = relationship("Document", foreign_keys=[matched_doc_id], back_populates="matched_reports")
