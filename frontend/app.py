@@ -3,7 +3,7 @@ import requests
 import os
 import extra_streamlit_components as stx
 
-API_BASE_URL = "http://localhost:8000/api"
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api")
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(

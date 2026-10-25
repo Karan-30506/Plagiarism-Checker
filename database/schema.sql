@@ -39,5 +39,5 @@ CREATE INDEX IF NOT EXISTS idx_reports_matched_doc ON public.plagiarism_reports(
 
 -- Storage Bucket Creation Policy
 INSERT INTO storage.buckets (id, name, public) 
-VALUES ('compressed-docs', 'compressed-docs', true)
+VALUES ('compressed_docs', 'compressed_docs', true)
 ON CONFLICT (id) DO NOTHING;

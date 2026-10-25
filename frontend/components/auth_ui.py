@@ -1,8 +1,10 @@
-import streamlit as st
-import requests
-import extra_streamlit_components as stx
+import os
 
-API_URL = "http://localhost:8000/api/auth"
+import extra_streamlit_components as stx
+import requests
+import streamlit as st
+
+API_URL = f"{os.getenv('API_BASE_URL', 'http://localhost:8000/api').rstrip('/')}/auth"
 
 def render_auth_ui(cookie_manager):
     st.markdown("<h2 style='text-align: center; margin-bottom: 1rem;'>🔒 Access Control</h2>", unsafe_allow_html=True)
