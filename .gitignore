@@ -1,0 +1,61 @@
+# Environment & Secret Files
+.env
+.env.local
+*.env
+!.env.example
+
+# Python & Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# C++ Compilation & Build Artifacts
+build/
+bin/
+out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.dylib
+*.exe
+
+# Database & Migration Storage
+*.db
+*.sqlite3
+
+# Streamlit Local Cache & PyVis Html Exports
+.streamlit/
+*.html
+
+# IDE & Editor Specific Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Package Distribution
+dist/
+build/
+*.egg-info/
+
+# Auto-generated PyVis JavaScript & CSS Dependencies
+lib/
+*.html
+temp_*.html
