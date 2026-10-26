@@ -153,3 +153,114 @@ def query_trie_top_k(
         if os.path.exists(query_path):  os.remove(query_path)
         if os.path.exists(corpus_path): os.remove(corpus_path)
         if os.path.exists(output_path): os.remove(output_path)
+
+
+# ---------------------------------------------------------------------------
+# Person 3: Diff Engine Bridge (KMP + Suffix Array)
+# ---------------------------------------------------------------------------
+
+def run_diff_engine(
+    source_text: str,
+    target_text: str,
+    min_len: int = 10
+) -> dict:
+    """
+    Invokes compiled C++ CLI 'diff' mode which uses:
+      - KMPMatcher::align_lines()  — exact line-level alignment with LPS table
+      - SuffixArray::find_common_substrings() — joint SA + Kasai LCP array
+
+    Args:
+        source_text: Decompressed plain text of the source document.
+        target_text: Decompressed plain text of the matched/target document.
+        min_len: Minimum substring length for suffix-array common-substring search.
+
+    Returns:
+        dict with keys:
+          - matched_source_lines: list[int]  — 1-based lines in source that matched
+          - matched_target_lines: list[int]  — 1-based lines in target that matched
+          - line_matches: list[dict]         — each has source_line, target_line,
+                                               match_length, text fields
+          - common_substrings: list[dict]    — top-50, each has pos_in_A, pos_in_B,
+                                               length, line_A, line_B fields
+    """
+    import json as _json
+
+    if not os.path.exists(CLI_EXE):
+        raise FileNotFoundError(f"C++ Engine executable not found at '{CLI_EXE}'.")
+
+    fd_src, src_path = tempfile.mkstemp(suffix=".txt")
+    fd_tgt, tgt_path = tempfile.mkstemp(suffix=".txt")
+    fd_out, out_path = tempfile.mkstemp(suffix=".json")
+
+    try:
+        with os.fdopen(fd_src, "wb") as f:
+            f.write(source_text.encode("utf-8"))
+        with os.fdopen(fd_tgt, "wb") as f:
+            f.write(target_text.encode("utf-8"))
+        os.close(fd_out)
+
+        cmd = [CLI_EXE, "diff", src_path, tgt_path, out_path, str(min_len)]
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        with open(out_path, "r", encoding="utf-8") as f:
+            result = _json.load(f)
+
+        return result
+
+    finally:
+        for p in (src_path, tgt_path, out_path):
+            if os.path.exists(p):
+                os.remove(p)
+
+
+# ---------------------------------------------------------------------------
+# Person 3: Collusion Engine Bridge (DSU Clustering)
+# ---------------------------------------------------------------------------
+
+def run_collusion_engine(
+    pairs: list[tuple[str, str, float]],
+    threshold: float = 0.5
+) -> dict:
+    """
+    Invokes compiled C++ CLI 'collusion' mode which runs DSU (Path Compression +
+    Union by Rank) clustering over a list of document similarity pairs.
+
+    Args:
+        pairs: list of (doc_id_A, doc_id_B, similarity_score) triples.
+        threshold: minimum score to merge two documents into the same component.
+
+    Returns:
+        dict with keys:
+          - nodes: list[dict]  — each has id, doc_id, label, cluster_id
+          - edges: list[dict]  — each has source, target, weight,
+                                 doc_id_source, doc_id_target
+    """
+    import json as _json
+
+    if not os.path.exists(CLI_EXE):
+        raise FileNotFoundError(f"C++ Engine executable not found at '{CLI_EXE}'.")
+
+    if not pairs:
+        return {"nodes": [], "edges": []}
+
+    fd_pairs, pairs_path = tempfile.mkstemp(suffix=".pairs")
+    fd_out,   out_path   = tempfile.mkstemp(suffix=".json")
+
+    try:
+        with os.fdopen(fd_pairs, "w", encoding="utf-8") as f:
+            for doc_a, doc_b, score in pairs:
+                f.write(f"{doc_a} {doc_b} {score}\n")
+        os.close(fd_out)
+
+        cmd = [CLI_EXE, "collusion", pairs_path, out_path, str(threshold)]
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        with open(out_path, "r", encoding="utf-8") as f:
+            result = _json.load(f)
+
+        return result
+
+    finally:
+        for p in (pairs_path, out_path):
+            if os.path.exists(p):
+                os.remove(p)

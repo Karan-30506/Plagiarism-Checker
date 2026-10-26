@@ -2,6 +2,9 @@
 #include "include/winnowing.hpp"
 #include "include/compressed_trie.hpp"
 #include "include/binomial_heap.hpp"
+#include "include/suffix_tree.hpp"
+#include "include/kmp.hpp"
+#include "include/dsu.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -36,6 +39,8 @@ int main(int argc, char* argv[]) {
         std::cerr << "  Decompress: " << argv[0] << " decompress <input_bin> <output_txt>\n";
         std::cerr << "  Winnow:     " << argv[0] << " winnow <input_txt> <output_hashes_txt> [k] [w]\n";
         std::cerr << "  Query:      " << argv[0] << " query <query_hashes_txt> <corpus_hashes_dir_listing_txt> <output_json> [top_k]\n";
+        std::cerr << "  Diff:       " << argv[0] << " diff <source_txt> <target_txt> <output_json> [min_len]\n";
+        std::cerr << "  Collusion:  " << argv[0] << " collusion <pairs_txt> <output_json> [threshold]\n";
         return 1;
     }
 
@@ -245,6 +250,198 @@ int main(int argc, char* argv[]) {
         std::cerr << "[INFO] Query: " << query_hashes.size() << " hashes, "
                   << hit_counts.size() << " candidate docs, "
                   << "Top-" << top_results.size() << " returned.\n";
+    }
+
+    // ------------------------------------------------------------------
+    // DIFF  — KMP line-level alignment + Suffix Array LCS detection
+    //
+    // argv[2]: source_txt        — path to source document text file
+    // argv[3]: target_txt        — path to target document text file
+    // argv[4]: output_json       — diff result JSON
+    // argv[5]: min_len           — minimum match length for suffix array (default 10)
+    // ------------------------------------------------------------------
+    else if (mode == "diff") {
+        if (argc < 5) {
+            std::cerr << "Usage: " << argv[0]
+                      << " diff <source_txt> <target_txt> <output_json> [min_len]\n";
+            return 1;
+        }
+        std::string target_path = argv[3];
+        output_path             = argv[4];
+        size_t min_len          = (argc >= 6) ? static_cast<size_t>(std::stoi(argv[5])) : 10;
+
+        std::string source_text = read_file(input_path);
+        std::string target_text = read_file(target_path);
+
+        // --- KMP: line-level matches ---
+        std::vector<LineMatch> line_matches =
+            KMPMatcher::align_lines(source_text, target_text, 6);
+
+        // --- Suffix Array: common substrings ---
+        SuffixArray sa(source_text, target_text);
+        std::vector<CommonSubstring> cs_matches = sa.find_common_substrings(min_len);
+
+        // Collect matched source line numbers (union of both methods)
+        std::unordered_set<int> matched_source_lines;
+        std::unordered_set<int> matched_target_lines;
+
+        for (const auto& lm : line_matches) {
+            matched_source_lines.insert(lm.source_line);
+            matched_target_lines.insert(lm.target_line);
+        }
+        for (const auto& cs : cs_matches) {
+            if (cs.line_A > 0) matched_source_lines.insert(cs.line_A);
+            if (cs.line_B > 0) matched_target_lines.insert(cs.line_B);
+        }
+
+        // Write JSON
+        std::ofstream out(output_path);
+        if (!out.is_open()) {
+            std::cerr << "Error: Cannot write output JSON " << output_path << "\n";
+            return 1;
+        }
+
+        out << "{\n";
+        out << "  \"matched_source_lines\": [";
+        bool first = true;
+        for (int ln : matched_source_lines) {
+            if (!first) out << ", ";
+            out << ln; first = false;
+        }
+        out << "],\n";
+
+        out << "  \"matched_target_lines\": [";
+        first = true;
+        for (int ln : matched_target_lines) {
+            if (!first) out << ", ";
+            out << ln; first = false;
+        }
+        out << "],\n";
+
+        out << "  \"line_matches\": [\n";
+        for (size_t i = 0; i < line_matches.size(); ++i) {
+            const auto& lm = line_matches[i];
+            // Escape backslashes and double-quotes in matched_text
+            std::string safe_text = lm.matched_text;
+            std::string escaped;
+            for (char c : safe_text) {
+                if (c == '"')  escaped += "\\\"";
+                else if (c == '\\') escaped += "\\\\";
+                else escaped += c;
+            }
+            out << "    {\"source_line\": " << lm.source_line
+                << ", \"target_line\": " << lm.target_line
+                << ", \"match_length\": " << lm.match_length
+                << ", \"text\": \"" << escaped << "\"}";
+            if (i + 1 < line_matches.size()) out << ",";
+            out << "\n";
+        }
+        out << "  ],\n";
+
+        out << "  \"common_substrings\": [\n";
+        size_t limit = std::min(cs_matches.size(), size_t(50)); // top 50 only
+        for (size_t i = 0; i < limit; ++i) {
+            const auto& cs = cs_matches[i];
+            out << "    {\"pos_in_A\": " << cs.pos_in_A
+                << ", \"pos_in_B\": " << cs.pos_in_B
+                << ", \"length\": " << cs.length
+                << ", \"line_A\": " << cs.line_A
+                << ", \"line_B\": " << cs.line_B << "}";
+            if (i + 1 < limit) out << ",";
+            out << "\n";
+        }
+        out << "  ]\n";
+        out << "}\n";
+        out.close();
+
+        std::cerr << "[INFO] Diff: " << line_matches.size() << " line matches, "
+                  << cs_matches.size() << " common substrings found.\n";
+    }
+
+    // ------------------------------------------------------------------
+    // COLLUSION  — DSU clustering from similarity pairs
+    //
+    // argv[2]: pairs_txt    — one "doc_id_A doc_id_B score\n" per line
+    // argv[3]: output_json  — node/edge graph JSON for PyVis
+    // argv[4]: threshold    — similarity threshold for merging (default 0.5)
+    // ------------------------------------------------------------------
+    else if (mode == "collusion") {
+        if (argc < 4) {
+            std::cerr << "Usage: " << argv[0]
+                      << " collusion <pairs_txt> <output_json> [threshold]\n";
+            return 1;
+        }
+        output_path    = argv[3];
+        double threshold = (argc >= 5) ? std::stod(argv[4]) : 0.5;
+
+        // Load pairs
+        std::vector<std::tuple<std::string, std::string, double>> pairs;
+        {
+            std::ifstream pf(input_path);
+            if (!pf.is_open()) {
+                std::cerr << "Error: Cannot open pairs file " << input_path << "\n";
+                return 1;
+            }
+            std::string line;
+            while (std::getline(pf, line)) {
+                if (line.empty()) continue;
+                std::istringstream iss(line);
+                std::string da, db;
+                double score;
+                if (iss >> da >> db >> score) {
+                    pairs.emplace_back(da, db, score);
+                }
+            }
+        }
+
+        if (pairs.empty()) {
+            std::ofstream out(output_path);
+            out << "{\"nodes\": [], \"edges\": []}\n";
+            std::cerr << "[INFO] Collusion: no pairs — empty graph.\n";
+            return 0;
+        }
+
+        // Build DSU
+        DSUBuildResult res = build_dsu_from_pairs(pairs, threshold);
+        DSU& dsu = res.dsu;
+
+        std::vector<GraphNode> nodes = dsu.export_nodes();
+        std::vector<GraphEdge> edges = dsu.export_edges();
+
+        // Write JSON
+        std::ofstream out(output_path);
+        if (!out.is_open()) {
+            std::cerr << "Error: Cannot write output JSON " << output_path << "\n";
+            return 1;
+        }
+
+        out << "{\n  \"nodes\": [\n";
+        for (size_t i = 0; i < nodes.size(); ++i) {
+            const auto& n = nodes[i];
+            out << "    {\"id\": " << n.id
+                << ", \"doc_id\": \"" << n.doc_id << "\""
+                << ", \"label\": \"" << n.label << "\""
+                << ", \"cluster_id\": " << n.cluster_id << "}";
+            if (i + 1 < nodes.size()) out << ",";
+            out << "\n";
+        }
+        out << "  ],\n  \"edges\": [\n";
+        for (size_t i = 0; i < edges.size(); ++i) {
+            const auto& e = edges[i];
+            out << "    {\"source\": " << e.source
+                << ", \"target\": " << e.target
+                << ", \"weight\": " << e.weight
+                << ", \"doc_id_source\": \"" << e.doc_id_source << "\""
+                << ", \"doc_id_target\": \"" << e.doc_id_target << "\"}";
+            if (i + 1 < edges.size()) out << ",";
+            out << "\n";
+        }
+        out << "  ]\n}\n";
+        out.close();
+
+        std::cerr << "[INFO] Collusion: " << nodes.size() << " nodes, "
+                  << edges.size() << " edges, "
+                  << dsu.num_components() << " components.\n";
     }
 
     else {
