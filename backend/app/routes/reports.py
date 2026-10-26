@@ -33,15 +33,15 @@ Pipeline (P3 scope — Part 2):
     3. Return node/edge graph formatted for PyVis render in the frontend.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List
 import uuid
 
 from app.database import get_db
 from app.models import Document, PlagiarismReport
 from app.auth import get_current_user
 from app.engine_bridge import query_trie_top_k, run_diff_engine, run_collusion_engine, decompress_text_huffman
+from app.supabase_client import supabase_admin
 
 router = APIRouter(prefix="/api/reports", tags=["Plagiarism Reports"])
 
@@ -77,7 +77,7 @@ def _build_corpus_index(
 # ---------------------------------------------------------------------------
 @router.post("/check")
 def check_document(
-    payload: dict,          # { "source_doc_id": "<uuid>", "top_k": 10 }
+    payload: dict,  # { "source_doc_id": "<uuid>", "top_k": 10 }
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -108,7 +108,12 @@ def check_document(
       }
     """
     source_doc_id_str = payload.get("source_doc_id")
-    top_k = int(payload.get("top_k", 10))
+    try:
+        top_k = int(payload.get("top_k", 10))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="top_k must be an integer.")
+    if top_k < 1:
+        raise HTTPException(status_code=400, detail="top_k must be greater than zero.")
 
     if not source_doc_id_str:
         raise HTTPException(status_code=400, detail="source_doc_id is required.")
@@ -116,10 +121,18 @@ def check_document(
     # --- 1. Fetch source document ---
     try:
         source_uuid = uuid.UUID(source_doc_id_str)
-    except ValueError:
+    except (ValueError, TypeError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid source_doc_id format.")
 
-    source_doc = db.query(Document).filter(Document.id == source_uuid).first()
+    try:
+        user_uuid = uuid.UUID(str(current_user["id"]))
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid user ID in token.")
+
+    source_doc = db.query(Document).filter(
+        Document.id == source_uuid,
+        Document.user_id == user_uuid
+    ).first()
     if not source_doc:
         raise HTTPException(status_code=404, detail="Source document not found.")
 
@@ -308,8 +321,6 @@ def get_diff(
         ]
       }
     """
-    import os
-
     # --- 1. Fetch report ---
     try:
         report_uuid = uuid.UUID(report_id)
@@ -338,37 +349,26 @@ def get_diff(
     if not matched_doc:
         raise HTTPException(status_code=404, detail="Matched document not found.")
 
-    # --- 3. Decompress both documents ---
-    # Documents are stored as Huffman-compressed binary blobs.
-    # The storage_path column holds the file path on the local Docker volume mount.
-    # If the binary is unavailable, we return a placeholder so the UI still renders.
+    # --- 3. Download and decompress both documents from Supabase Storage ---
     try:
-        source_text: str = ""
-        matched_text: str = ""
-
-        storage_base = os.environ.get("STORAGE_LOCAL_PATH", "/app/storage")
-        src_bin_path = os.path.join(storage_base, source_doc.storage_path)
-        tgt_bin_path = os.path.join(storage_base, matched_doc.storage_path)
-
-        if os.path.exists(src_bin_path):
-            with open(src_bin_path, "rb") as f:
-                source_text = decompress_text_huffman(f.read())
-        else:
-            source_text = f"[Source binary not available at {src_bin_path}]"
-
-        if os.path.exists(tgt_bin_path):
-            with open(tgt_bin_path, "rb") as f:
-                matched_text = decompress_text_huffman(f.read())
-        else:
-            matched_text = f"[Target binary not available at {tgt_bin_path}]"
-
+        source_binary = supabase_admin.storage.from_("compressed_docs").download(
+            source_doc.storage_path
+        )
+        matched_binary = supabase_admin.storage.from_("compressed_docs").download(
+            matched_doc.storage_path
+        )
+        source_text = decompress_text_huffman(source_binary)
+        matched_text = decompress_text_huffman(matched_binary)
     except FileNotFoundError as e:
         raise HTTPException(
             status_code=503,
             detail=f"C++ engine not found. Build the project first. ({e})"
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Decompression error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to load or decompress document content from Supabase Storage: {e}"
+        )
 
     # --- 4. Run C++ diff engine ---
     try:
@@ -578,4 +578,3 @@ def get_report_detail(
         "matched_segments": report.matched_segments or [],
         "created_at": report.created_at.isoformat() if report.created_at else None
     }
-

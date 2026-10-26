@@ -21,6 +21,8 @@ if os.path.exists(css_path):
 
 from components.auth_ui import render_auth_ui
 from components.collusion_graph import render_collusion_graph
+from components.diff_viewer import render_diff_viewer
+from components.top_k_table import render_top_k_table
 
 # --- COOKIE MANAGER FOR PERSISTENT AUTHENTICATION ---
 cookie_manager = stx.CookieManager()
@@ -36,6 +38,14 @@ if "uploader_key" not in st.session_state:
     st.session_state["uploader_key"] = 0
 if "last_ingested_results" not in st.session_state:
     st.session_state["last_ingested_results"] = None
+if "detection_result" not in st.session_state:
+    st.session_state["detection_result"] = None
+if "detection_source_id" not in st.session_state:
+    st.session_state["detection_source_id"] = None
+if "selected_diff" not in st.session_state:
+    st.session_state["selected_diff"] = None
+if "detection_error" not in st.session_state:
+    st.session_state["detection_error"] = None
 
 # --- AUTO-LOGIN PERSISTENCE CHECK FROM BROWSER COOKIES ---
 saved_token = cookie_manager.get(cookie="auth_token")
@@ -355,14 +365,115 @@ elif page == "💾 Storage Vault":
 # -----------------------------------------------------------------------------
 elif page == "📊 Plagiarism Inspection":
     st.title("📊 Plagiarism Inspection & Code Diffs")
-    st.markdown("""
-        <div class="empty-state-card">
-            <div class="empty-state-icon">📊</div>
-            <div class="empty-state-title">Detection Engine Pending (Stage 2)</div>
-            <div class="empty-state-desc">Your uploaded documents have been successfully compressed via Huffman and fingerprinted via Winnowing into PostgreSQL.
-            <br><br>Candidate retrieval using <b>Compressed Radix Trie</b>, Top-K ranking using <b>Max-Binomial Heap</b>, and line diffs using <b>Suffix Tree & KMP</b> will be connected next.</div>
-        </div>
-    """, unsafe_allow_html=True)
+    st.caption("Compare an uploaded document against the indexed corpus using Winnowing fingerprints, the compressed trie, and Top-K ranking.")
+
+    documents_load_failed = False
+    try:
+        documents_response = requests.get(
+            f"{API_BASE_URL}/documents/my-documents",
+            headers=get_auth_headers(),
+            timeout=15
+        )
+        documents_response.raise_for_status()
+        documents = documents_response.json()
+    except requests.exceptions.RequestException as e:
+        st.error(f"Could not load your documents: {e}")
+        documents = []
+        documents_load_failed = True
+
+    if not documents and not documents_load_failed:
+        st.info("Upload at least one document before running plagiarism detection.")
+    elif documents:
+        documents_by_id = {document["id"]: document for document in documents}
+        source_doc_id = st.selectbox(
+            "Document to check",
+            options=list(documents_by_id),
+            format_func=lambda doc_id: (
+                f"{documents_by_id[doc_id]['filename']} ({doc_id[:8]})"
+            )
+        )
+        top_k = st.number_input(
+            "Maximum number of matches",
+            min_value=1,
+            max_value=50,
+            value=10,
+            step=1
+        )
+
+        if st.button("Run plagiarism detection", type="primary"):
+            st.session_state["detection_result"] = None
+            st.session_state["selected_diff"] = None
+            st.session_state["detection_error"] = None
+            with st.spinner("Comparing fingerprints against the indexed corpus..."):
+                try:
+                    response = requests.post(
+                        f"{API_BASE_URL}/reports/check",
+                        headers=get_auth_headers(),
+                        json={"source_doc_id": source_doc_id, "top_k": top_k},
+                        timeout=90
+                    )
+                    response.raise_for_status()
+                    st.session_state["detection_result"] = response.json()
+                    st.session_state["detection_source_id"] = source_doc_id
+                except requests.exceptions.RequestException as e:
+                    detail = e
+                    if e.response is not None:
+                        try:
+                            detail = e.response.json().get("detail", e)
+                        except ValueError:
+                            detail = e.response.text or e
+                    st.session_state["detection_error"] = str(detail)
+
+        if st.session_state["detection_error"]:
+            st.error(f"Plagiarism detection failed: {st.session_state['detection_error']}")
+
+        detection_result = st.session_state["detection_result"]
+        if detection_result and st.session_state["detection_source_id"] == source_doc_id:
+            if detection_result.get("message"):
+                st.info(detection_result["message"])
+
+            matches = detection_result.get("top_k_matches", [])
+            if matches:
+                st.subheader(f"Matches for {detection_result['source_filename']}")
+
+                def load_diff(match):
+                    st.session_state["selected_diff"] = None
+                    st.session_state["detection_error"] = None
+                    try:
+                        diff_response = requests.get(
+                            f"{API_BASE_URL}/reports/diff",
+                            headers=get_auth_headers(),
+                            params={"report_id": match["report_id"]},
+                            timeout=90
+                        )
+                        diff_response.raise_for_status()
+                        st.session_state["selected_diff"] = diff_response.json()
+                    except requests.exceptions.RequestException as e:
+                        detail = e
+                        if e.response is not None:
+                            try:
+                                detail = e.response.json().get("detail", e)
+                            except ValueError:
+                                detail = e.response.text or e
+                        st.session_state["detection_error"] = str(detail)
+
+                render_top_k_table(matches, on_select_match_callback=load_diff)
+
+                if st.session_state["detection_error"]:
+                    st.error(f"Could not load the document diff: {st.session_state['detection_error']}")
+
+                selected_diff = st.session_state["selected_diff"]
+                if selected_diff:
+                    render_diff_viewer(
+                        selected_diff["source_filename"],
+                        selected_diff["source_text"],
+                        selected_diff["matched_filename"],
+                        selected_diff["matched_text"],
+                        set(selected_diff["matched_source_lines"]),
+                        set(selected_diff["matched_target_lines"])
+                    )
+            elif not detection_result.get("message"):
+                st.info("No matching documents were found in the indexed corpus.")
 
 # -----------------------------------------------------------------------------
 # PAGE 4: COLLUSION ANALYSIS

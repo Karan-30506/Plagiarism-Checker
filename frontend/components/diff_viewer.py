@@ -1,6 +1,13 @@
 import streamlit as st
 
-def render_diff_viewer(source_filename: str, source_code: str, matched_filename: str, matched_code: str, matched_lines: set):
+def render_diff_viewer(
+    source_filename: str,
+    source_code: str,
+    matched_filename: str,
+    matched_code: str,
+    matched_source_lines: set,
+    matched_target_lines: set | None = None
+):
     st.markdown("### 🔀 Side-by-Side Code Diff Alignment (KMP + Suffix Tree)")
     st.caption("Highlighted red lines indicate exact or structural code segment matches across documents.")
     
@@ -18,12 +25,14 @@ def render_diff_viewer(source_filename: str, source_code: str, matched_filename:
     
     source_lines = source_code.splitlines() if source_code else ["// Source document empty or unavailable"]
     target_lines = matched_code.splitlines() if matched_code else ["// Target document empty or unavailable"]
+    if matched_target_lines is None:
+        matched_target_lines = matched_source_lines
     
     with col1:
         st.markdown(f"**Source Document:** `{source_filename}`")
         html_content = "<div class='diff-box'>"
         for idx, line in enumerate(source_lines, 1):
-            is_match = idx in matched_lines
+            is_match = idx in matched_source_lines
             line_cls = "diff-matched" if is_match else "diff-unmatched"
             escaped_line = line.replace("<", "&lt;").replace(">", "&gt;")
             html_content += f"<div class='diff-line {line_cls}'><span class='diff-line-number'>{idx}</span><span class='diff-line-content'>{escaped_line}</span></div>"
@@ -34,7 +43,7 @@ def render_diff_viewer(source_filename: str, source_code: str, matched_filename:
         st.markdown(f"**Corpus Match:** `{matched_filename}`")
         html_content = "<div class='diff-box'>"
         for idx, line in enumerate(target_lines, 1):
-            is_match = idx in matched_lines
+            is_match = idx in matched_target_lines
             line_cls = "diff-matched" if is_match else "diff-unmatched"
             escaped_line = line.replace("<", "&lt;").replace(">", "&gt;")
             html_content += f"<div class='diff-line {line_cls}'><span class='diff-line-number'>{idx}</span><span class='diff-line-content'>{escaped_line}</span></div>"
