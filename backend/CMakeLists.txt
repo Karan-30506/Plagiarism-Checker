@@ -10,6 +10,8 @@ include_directories(cpp_engine/include)
 add_executable(plagiarism_cli
     cpp_engine/src/huffman.cpp
     cpp_engine/src/winnowing.cpp
+    cpp_engine/src/compressed_trie.cpp
+    cpp_engine/src/binomial_heap.cpp
     cpp_engine/main_cli.cpp
 )
 

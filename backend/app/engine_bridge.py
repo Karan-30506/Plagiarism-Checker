@@ -92,3 +92,64 @@ def get_winnow_fingerprints(text: str, k: int = 10, w: int = 4) -> list[dict]:
     finally:
         if os.path.exists(in_path): os.remove(in_path)
         if os.path.exists(out_path): os.remove(out_path)
+
+
+def query_trie_top_k(
+    query_fingerprints: list[dict],
+    corpus_index: dict[str, list[int]],
+    top_k: int = 10
+) -> list[dict]:
+    """
+    Invokes compiled C++ CLI 'query' mode which:
+      1. Builds a Compressed Radix Trie from all corpus fingerprint hashes.
+      2. Looks up each query hash in O(L) time.
+      3. Ranks candidate documents by Jaccard similarity using a Max-Binomial Heap.
+      4. Returns the Top-K matches.
+
+    Args:
+        query_fingerprints: list of {"hash": int, "position": int} dicts from winnowing.
+        corpus_index: {doc_id: [hash1, hash2, ...]} mapping for all corpus documents.
+        top_k: number of top candidates to return.
+
+    Returns:
+        list of {"doc_id": str, "similarity_score": float} sorted descending by score.
+    """
+    if not os.path.exists(CLI_EXE):
+        raise FileNotFoundError(f"C++ Engine executable not found at '{CLI_EXE}'.")
+
+    if not query_fingerprints or not corpus_index:
+        return []
+
+    import json
+
+    # Write query hashes file: "hash position\n" per line
+    fd_q, query_path = tempfile.mkstemp(suffix=".hashes")
+    # Write corpus index file: "doc_id hash1 hash2 ...\n" per line
+    fd_c, corpus_path = tempfile.mkstemp(suffix=".corpus")
+    # Output JSON file
+    fd_o, output_path = tempfile.mkstemp(suffix=".json")
+
+    try:
+        with os.fdopen(fd_q, "w", encoding="utf-8") as fq:
+            for fp in query_fingerprints:
+                fq.write(f"{fp['hash']} {fp['position']}\n")
+
+        with os.fdopen(fd_c, "w", encoding="utf-8") as fc:
+            for doc_id, hashes in corpus_index.items():
+                hash_str = " ".join(str(h) for h in hashes)
+                fc.write(f"{doc_id} {hash_str}\n")
+
+        os.close(fd_o)
+
+        cmd = [CLI_EXE, "query", query_path, corpus_path, output_path, str(top_k)]
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        with open(output_path, "r", encoding="utf-8") as fo:
+            results = json.load(fo)
+
+        return results  # list of {"doc_id": ..., "similarity_score": ...}
+
+    finally:
+        if os.path.exists(query_path):  os.remove(query_path)
+        if os.path.exists(corpus_path): os.remove(corpus_path)
+        if os.path.exists(output_path): os.remove(output_path)

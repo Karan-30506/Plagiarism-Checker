@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import auth, upload
+from app.routes import auth, upload, reports
 
 app = FastAPI(
     title="Plagiarism Engine API",
@@ -19,6 +19,7 @@ app.add_middleware(
 # Register API Routers
 app.include_router(auth.router)
 app.include_router(upload.router)
+app.include_router(reports.router)
 
 @app.get("/")
 def root():
