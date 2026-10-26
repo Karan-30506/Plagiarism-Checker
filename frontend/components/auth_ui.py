@@ -1,18 +1,32 @@
 import os
+from datetime import datetime, timedelta
 
-import extra_streamlit_components as stx
 import requests
 import streamlit as st
 
 API_URL = f"{os.getenv('API_BASE_URL', 'http://localhost:8000/api').rstrip('/')}/auth"
 
+
+def save_auth_cookies(cookie_manager, auth_data, email):
+    options = {"expires_at": datetime.now() + timedelta(days=30), "same_site": "lax"}
+    cookie_manager.set("auth_token", auth_data["access_token"], key="set_token", **options)
+    cookie_manager.set("refresh_token", auth_data["refresh_token"], key="set_refresh_token", **options)
+    cookie_manager.set("user_email", email, key="set_email", **options)
+    cookie_manager.set("user_id", auth_data["user_id"], key="set_id", **options)
+
+
+def clear_auth_cookies(cookie_manager):
+    for name in ("auth_token", "refresh_token", "user_email", "user_id"):
+        if name in cookie_manager.cookies:
+            cookie_manager.delete(name, key=f"delete_{name}")
+
 def render_auth_ui(cookie_manager):
     st.markdown("<h2 style='text-align: center; margin-bottom: 1rem;'>🔒 Access Control</h2>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #a6adc8;'>Log in or register to access the Plagiarism Analysis Platform</p>", unsafe_allow_html=True)
     
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col2:
+    _, login_column, _ = st.columns([1, 2, 1])
+
+    with login_column:
         tab_login, tab_signup = st.tabs(["🔑 Login", "📝 Register"])
         
         # --- LOGIN TAB ---
@@ -37,12 +51,10 @@ def render_auth_ui(cookie_manager):
                                 token = data["access_token"]
                                 user_id = data["user_id"]
                                 
-                                # Store session token in browser Cookie / localStorage
-                                cookie_manager.set("auth_token", token, key="set_token")
-                                cookie_manager.set("user_email", email, key="set_email")
-                                cookie_manager.set("user_id", user_id, key="set_id")
-                                
+                                save_auth_cookies(cookie_manager, data, email)
+
                                 st.session_state["authenticated"] = True
+                                st.session_state["auth_restore_checked"] = True
                                 st.session_state["user_token"] = token
                                 st.session_state["user_id"] = user_id
                                 st.session_state["user_email"] = email

@@ -3,3 +3,4 @@ streamlit==1.66.1
 extra-streamlit-components==0.1.81
 pyvis==0.3.1
 networkx==3.2.1
+Pygments==2.21.0

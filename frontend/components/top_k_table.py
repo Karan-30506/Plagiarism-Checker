@@ -1,15 +1,17 @@
 import streamlit as st
 
 def render_top_k_table(matches: list, on_select_match_callback=None):
-    st.markdown("### 🏆 Top-K Ranked Matches (Max-Binomial Heap)")
-    st.caption("Matches extracted from the Hot Compressed Trie Hash Index and ranked using a Binomial Heap.")
+    st.markdown("### 🏆 Top-K Ranked Matches")
+    st.caption(
+        "Candidates share Winnowing fingerprints and are ranked by set-based Jaccard similarity."
+    )
     
     if not matches:
         st.markdown("""
             <div class="empty-state-card">
                 <div class="empty-state-icon">📄</div>
                 <div class="empty-state-title">No Candidate Matches</div>
-                <div class="empty-state-desc">No existing corpus documents matched above the similarity threshold.</div>
+                <div class="empty-state-desc">No other document shared a Winnowing fingerprint with this source.</div>
             </div>
         """, unsafe_allow_html=True)
         return

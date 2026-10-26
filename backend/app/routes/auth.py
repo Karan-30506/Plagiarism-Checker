@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 import traceback
 from app.database import get_db
 from app.models import User
-from app.schemas import UserCreate, UserLogin, Token, UserResponse
+from app.schemas import UserCreate, UserLogin, Token, UserResponse, RefreshTokenRequest
 from app.supabase_client import supabase
 from app.auth import get_current_user
 
@@ -61,12 +61,31 @@ def login(user_data: UserLogin):
 
         return Token(
             access_token=auth_res.session.access_token,
+            refresh_token=auth_res.session.refresh_token,
             user_id=auth_res.user.id
         )
     except HTTPException:
         raise
     except Exception as e:
         error_msg = getattr(e, "message", "Invalid email or password")
+        raise HTTPException(status_code=401, detail=error_msg)
+
+@router.post("/refresh", response_model=Token)
+def refresh_session(payload: RefreshTokenRequest):
+    try:
+        auth_res = supabase.auth.refresh_session(payload.refresh_token)
+        if not auth_res or not auth_res.session or not auth_res.user:
+            raise HTTPException(status_code=401, detail="Session could not be refreshed.")
+
+        return Token(
+            access_token=auth_res.session.access_token,
+            refresh_token=auth_res.session.refresh_token,
+            user_id=auth_res.user.id
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = getattr(e, "message", "Session refresh failed.")
         raise HTTPException(status_code=401, detail=error_msg)
 
 @router.get("/me", response_model=UserResponse)

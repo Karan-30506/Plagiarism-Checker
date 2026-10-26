@@ -1,6 +1,6 @@
 # How the Plagiarism Checker Works
 
-This document describes both the **intended architecture** documented in [`strucutre.md`](./strucutre.md) and the **behavior currently implemented** in the repository. The distinction matters: some components are implemented only partially or are not connected to the user interface yet.
+This document describes both the **intended architecture** documented in [`strucutre.md`](./strucutre.md) and the **behavior currently implemented** in the repository. The distinction matters: some components are implemented only partially, as noted in the relevant sections.
 
 ## At a glance
 
@@ -11,6 +11,8 @@ The project has three main runtime parts:
 - **C++ CLI engine**: implements Huffman compression/decompression, Winnowing fingerprints, candidate lookup and ranking, diff analysis, and DSU clustering.
 
 Supabase is used for authentication, PostgreSQL database storage, and the `compressed_docs` object-storage bucket.
+
+Authentication stores the Supabase access and refresh tokens in persistent browser cookies. On a page refresh, the frontend validates the access token with the API and exchanges an expired token for a fresh session when possible.
 
 ```mermaid
 flowchart LR
@@ -56,7 +58,7 @@ flowchart TD
 
 ### Detection and ranking
 
-The user selects a document and clicks **Run plagiarism detection**. The backend loads the selected document’s fingerprints and the fingerprints of every other document it can see in the database. The C++ process builds a trie for that request, looks up shared hashes, scores candidates, and returns the Top-K.
+The user selects a document and clicks **Run plagiarism detection**. The backend loads the selected document’s fingerprints and the fingerprints of every other document it can see in the database. The C++ process builds a trie for that request, looks up shared hashes, scores candidates, and returns the Top-K. The UI defaults to all candidate matches; users can lower the limit, and API requests that omit `top_k` also return every candidate with a shared fingerprint.
 
 ```mermaid
 flowchart TD
@@ -69,7 +71,7 @@ flowchart TD
     G --> H[Insert corpus hashes into compressed radix trie]
     H --> I[Look up each unique query hash]
     I --> J[Count shared hashes per candidate]
-    J --> K[Compute Jaccard-like score]
+    J --> K[Compute set-based Jaccard score]
     K --> L[Max-binomial heap extracts Top-K]
     L --> M[Upsert directional report rows]
     M --> N[Return matches and scores to frontend]
@@ -161,7 +163,7 @@ The ORM definitions are in [`backend/app/models.py`](./backend/app/models.py); t
 
 ### API and data path
 
-The frontend loads the current user’s document list, lets them select a source and Top-K limit, and sends a request only when they click **Run plagiarism detection**. This UI path is in [`frontend/app.py`](./frontend/app.py).
+The frontend loads the current user’s document list, lets them select a source and Top-K limit, and sends a request only when they click **Run plagiarism detection**. The default limit is all other indexed documents; reducing the control keeps the response to that Top-K. This UI path is in [`frontend/app.py`](./frontend/app.py).
 
 The `POST /api/reports/check` handler in [`backend/app/routes/reports.py`](./backend/app/routes/reports.py):
 
@@ -194,12 +196,12 @@ For a candidate document, the implementation calculates:
 ```text
 intersection = number of unique query hashes found in that document
 query_size   = number of unique query hashes
-corpus_size  = number of stored hash entries read for that document
+corpus_size  = number of distinct corpus hashes for that document
 union        = query_size + corpus_size - intersection
 score        = intersection / union
 ```
 
-This is intended to be a Jaccard similarity score. There is an important implementation inconsistency: `corpus_size` counts fingerprint entries, including repeated hash values, while query size and hit counts are based on unique hash values. Therefore, when a corpus document has duplicate hashes, its result is not necessarily the mathematical Jaccard score over two distinct sets.
+The current implementation deduplicates both query and corpus hashes before measuring their set sizes, so the result is Jaccard similarity over distinct fingerprint hashes. This avoids repeated fingerprints inflating a document's size and artificially depressing the score. Identical documents should score 100%, even when their text produces repeated fingerprint hashes.
 
 Additional behavior to keep in mind:
 
@@ -215,7 +217,7 @@ Additional behavior to keep in mind:
 
 The `GET /api/reports/diff` route in [`backend/app/routes/reports.py`](./backend/app/routes/reports.py) looks up the directional report, checks that the source document belongs to the current user, fetches both compressed blobs from Supabase Storage, decompresses them, and calls the C++ `diff` mode. The frontend then renders the two texts side by side in [`frontend/components/diff_viewer.py`](./frontend/components/diff_viewer.py).
 
-The diff combines two analyses:
+The diff combines two analyses and is displayed in a Catppuccin Mocha side-by-side code-editor view. It shows line numbers, syntax highlighting, aligned additions/removals, inline changes, and lines identified as matching by the detection algorithms.
 
 ### Exact line matching
 
@@ -239,9 +241,9 @@ Only the **exact line-match records** are persisted to `plagiarism_reports.match
 
 ## 4. Collusion analysis and DSU
 
-The C++ DSU implementation in [`backend/cpp_engine/src/dsu.cpp`](./backend/cpp_engine/src/dsu.cpp) supports path compression and union by rank. The reports API has a `GET /api/reports/collusion-graph` endpoint that takes saved source/match/score pairs, passes them to the C++ collusion mode, and merges pairs at or above the requested threshold (default 0.5). It returns graph nodes and edges for the frontend.
+The C++ DSU implementation in [`backend/cpp_engine/src/dsu.cpp`](./backend/cpp_engine/src/dsu.cpp) supports path compression and union by rank. The reports API has a `POST /api/reports/collusion-graph/rebuild` endpoint that compares every document owned by the current user against the indexed corpus and refreshes saved similarity reports. This uses an inverted fingerprint index and set-based Jaccard scoring. The `GET /api/reports/collusion-graph` endpoint collapses reciprocal reports into one undirected edge per document pair, then merges qualifying edges at or above the requested threshold (default 0.2). The frontend exposes rebuild as **Rebuild reports for all my documents**; without rebuilding, the graph shows only documents represented in saved reports.
 
-However, the current Streamlit page does **not** call this API. In [`frontend/app.py`](./frontend/app.py), the collusion page calls `render_collusion_graph([], [])` with empty lists. Thus the DSU engine and API endpoint exist, but collusion analysis is not connected to the current UI flow.
+The Streamlit page calls this API and displays the returned graph. Its similarity threshold is adjustable; only report pairs meeting that threshold are used as links and merged into clusters. A cluster means a connected group of documents where each link meets the selected threshold; it does not prove coordination or intent.
 
 Also, the endpoint starts from reports whose source document belongs to the current user. Since candidate documents can belong to other users, returned match nodes may include other users’ documents.
 
@@ -255,10 +257,10 @@ Also, the endpoint starts from reports whose source document belongs to the curr
 | Huffman | Cold/archive compression | Implemented for extracted raw text; compressed blob is stored in Supabase Storage. |
 | Winnowing | Rolling-hash fingerprint selection | Implemented with defaults `k=10`, `w=4`; fingerprints are stored in PostgreSQL JSONB. |
 | Trie index | “Hot” compressed-trie hash index | Trie is rebuilt from all other documents on each query; it is not persisted between requests. |
-| Top-K | Rank candidate documents | Implemented using a max-binomial heap, but the Jaccard-like denominator counts duplicate corpus entries. |
+| Top-K | Rank candidate documents | Implemented using a max-binomial heap and Jaccard similarity over distinct fingerprint hashes. |
 | KMP diff | KMP-based line alignment | KMP search exists, but the active line alignment uses exact trimmed-line hash-map lookup. |
 | Suffix structure | “Suffix tree” / suffix-array terminology | The active implementation is a generalized suffix array with LCP processing, not a suffix tree. |
-| Collusion graph | DSU clusters visualized in the UI | DSU and API exist; the UI currently passes empty lists and does not fetch the API. |
+| Collusion graph | DSU clusters visualized in the UI | The UI fetches the API, renders qualifying links, and lets the user adjust the threshold. |
 
 ## 6. Practical limitations to remember
 
@@ -266,11 +268,9 @@ These are descriptions of the current behavior, not changes made by this documen
 
 1. **Corpus scope:** detection searches all other documents in the database, rather than only the current user’s uploads.
 2. **Per-request indexing:** the trie is reconstructed for every check, which may become expensive as the corpus grows.
-3. **Score consistency:** repeated corpus fingerprint hashes can make the current score differ from set-based Jaccard.
-4. **No-overlap exclusion:** documents with no shared fingerprint are not returned as candidates, even if another comparison method might find a textual similarity.
-5. **Storage consistency:** an upload failure can leave metadata and fingerprints without the compressed object needed for diffs.
-6. **Diff method naming:** exact line comparison is not using KMP in the active alignment path; “suffix tree” refers to suffix-array code.
-7. **Collusion UX:** the API and DSU engine are present, but the current collusion page does not invoke them.
+3. **No-overlap exclusion:** documents with no shared fingerprint are not returned as candidates, even if another comparison method might find a textual similarity.
+4. **Storage consistency:** an upload failure can leave metadata and fingerprints without the compressed object needed for diffs.
+5. **Diff method naming:** exact line comparison is not using KMP in the active alignment path; “suffix tree” refers to suffix-array code.
 
 ## 7. Source-code map
 

@@ -171,7 +171,7 @@ int main(int argc, char* argv[]) {
         //    Corpus index format (one line per doc):
         //      <doc_id> <hash_1> <hash_2> ... <hash_N>
         CompressedTrie trie;
-        std::unordered_map<std::string, uint64_t> doc_total_hashes;
+        std::unordered_map<std::string, std::unordered_set<uint64_t>> doc_hash_sets;
 
         {
             std::ifstream cf(corpus_index_path);
@@ -187,12 +187,10 @@ int main(int argc, char* argv[]) {
                 if (!(iss >> doc_id)) continue;
 
                 uint64_t h;
-                uint64_t count = 0;
                 while (iss >> h) {
                     trie.insert(h, doc_id);
-                    ++count;
+                    doc_hash_sets[doc_id].insert(h);
                 }
-                doc_total_hashes[doc_id] += count;
             }
         }
 
@@ -218,8 +216,8 @@ int main(int argc, char* argv[]) {
         uint64_t query_size = static_cast<uint64_t>(query_hashes.size());
 
         for (const auto& [doc_id, intersection_size] : hit_counts) {
-            uint64_t corpus_doc_size = doc_total_hashes.count(doc_id)
-                                       ? doc_total_hashes.at(doc_id) : 1;
+            uint64_t corpus_doc_size = doc_hash_sets.count(doc_id)
+                                       ? static_cast<uint64_t>(doc_hash_sets.at(doc_id).size()) : 1;
             uint64_t union_size = query_size + corpus_doc_size - intersection_size;
             double jaccard = union_size > 0
                              ? static_cast<double>(intersection_size) / union_size

@@ -4,6 +4,8 @@ import os
 import extra_streamlit_components as stx
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api")
+API_REQUEST_TIMEOUT = (10, 300)
+API_DIFF_TIMEOUT = (10, 180)
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -19,7 +21,7 @@ if os.path.exists(css_path):
     with open(css_path, "r", encoding="utf-8") as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
-from components.auth_ui import render_auth_ui
+from components.auth_ui import clear_auth_cookies, render_auth_ui, save_auth_cookies
 from components.collusion_graph import render_collusion_graph
 from components.diff_viewer import render_diff_viewer
 from components.top_k_table import render_top_k_table
@@ -30,6 +32,8 @@ cookie_manager = stx.CookieManager()
 # --- SESSION STATE INITIALIZATION ---
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
+if "auth_restore_checked" not in st.session_state:
+    st.session_state["auth_restore_checked"] = False
 if "user_token" not in st.session_state:
     st.session_state["user_token"] = None
 if "user_email" not in st.session_state:
@@ -46,17 +50,95 @@ if "selected_diff" not in st.session_state:
     st.session_state["selected_diff"] = None
 if "detection_error" not in st.session_state:
     st.session_state["detection_error"] = None
+if "show_diff_dialog" not in st.session_state:
+    st.session_state["show_diff_dialog"] = False
+if "auth_restore_error" not in st.session_state:
+    st.session_state["auth_restore_error"] = None
 
 # --- AUTO-LOGIN PERSISTENCE CHECK FROM BROWSER COOKIES ---
-saved_token = cookie_manager.get(cookie="auth_token")
-saved_email = cookie_manager.get(cookie="user_email")
-saved_id = cookie_manager.get(cookie="user_id")
-
-if saved_token and saved_email and not st.session_state["authenticated"]:
+def set_authenticated_session(token, email, user_id):
     st.session_state["authenticated"] = True
-    st.session_state["user_token"] = saved_token
-    st.session_state["user_email"] = saved_email
-    st.session_state["user_id"] = saved_id
+    st.session_state["user_token"] = token
+    st.session_state["user_email"] = email
+    st.session_state["user_id"] = user_id
+
+
+def get_auth_headers(token=None):
+    auth_token = token or st.session_state.get("user_token")
+    return {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+
+
+def restore_authentication(saved_cookies):
+    saved_token = saved_cookies.get("auth_token")
+    saved_refresh_token = saved_cookies.get("refresh_token")
+    saved_email = saved_cookies.get("user_email")
+    saved_id = saved_cookies.get("user_id")
+
+    if not saved_token or not saved_email:
+        return
+
+    try:
+        validation = requests.get(
+            f"{API_BASE_URL.rstrip('/')}/auth/me",
+            headers=get_auth_headers(saved_token),
+            timeout=10
+        )
+    except requests.exceptions.RequestException as e:
+        st.session_state["auth_restore_error"] = f"Could not verify the saved session: {e}"
+        return
+
+    if validation.ok:
+        validated_user = validation.json()
+        set_authenticated_session(
+            saved_token,
+            validated_user.get("email") or saved_email,
+            validated_user.get("id") or saved_id
+        )
+        return
+
+    if validation.status_code != 401:
+        st.session_state["auth_restore_error"] = (
+            f"Session validation failed with HTTP {validation.status_code}."
+        )
+        return
+
+    if not saved_refresh_token:
+        clear_auth_cookies(cookie_manager)
+        return
+
+    try:
+        refresh_response = requests.post(
+            f"{API_BASE_URL.rstrip('/')}/auth/refresh",
+            json={"refresh_token": saved_refresh_token},
+            timeout=10
+        )
+    except requests.exceptions.RequestException as e:
+        st.session_state["auth_restore_error"] = f"Could not refresh the saved session: {e}"
+        return
+
+    if not refresh_response.ok:
+        if refresh_response.status_code == 401:
+            clear_auth_cookies(cookie_manager)
+        else:
+            st.session_state["auth_restore_error"] = (
+                f"Session refresh failed with HTTP {refresh_response.status_code}."
+            )
+        return
+
+    refreshed_auth = refresh_response.json()
+    save_auth_cookies(cookie_manager, refreshed_auth, saved_email)
+    set_authenticated_session(
+        refreshed_auth["access_token"],
+        saved_email,
+        refreshed_auth["user_id"]
+    )
+
+
+if not st.session_state["authenticated"] and not st.session_state["auth_restore_checked"]:
+    saved_cookies = cookie_manager.get_all()
+    if saved_cookies.get("auth_token") and saved_cookies.get("user_email"):
+        restore_authentication(saved_cookies)
+        st.session_state["auth_restore_checked"] = True
 
 # Navigation callbacks
 def navigate_to_vault():
@@ -81,29 +163,36 @@ if st.session_state["authenticated"]:
     
     st.sidebar.divider()
     if st.sidebar.button("🚪 Sign Out", use_container_width=True):
-        # Clear persistent browser cookies
-        cookie_manager.delete("auth_token", key="del_token")
-        cookie_manager.delete("user_email", key="del_email")
-        cookie_manager.delete("user_id", key="del_id")
-        
+        clear_auth_cookies(cookie_manager)
         st.session_state["authenticated"] = False
         st.session_state["user_token"] = None
         st.session_state["user_email"] = None
+        st.session_state["user_id"] = None
+        st.session_state["auth_restore_checked"] = True
         st.session_state["last_ingested_results"] = None
+        st.session_state["selected_diff"] = None
+        st.session_state["show_diff_dialog"] = False
         st.rerun()
 else:
     page = "Auth"
 
-def get_auth_headers():
-    token = st.session_state.get("user_token")
-    return {"Authorization": f"Bearer {token}"} if token else {}
+if st.session_state["auth_restore_error"] and not st.session_state["authenticated"]:
+    st.error(st.session_state["auth_restore_error"])
+    if st.button("Retry session restoration"):
+        st.session_state["auth_restore_error"] = None
+        st.session_state["auth_restore_checked"] = False
+        st.rerun()
 
 # --- MODAL COMPONENT 1: VIEW CONTENT ---
 def render_document_modal_content(doc_id: str, filename: str):
     st.caption(f"Document UUID: `{doc_id}` | Bucket: `Supabase Storage (compressed_docs)`")
     with st.spinner("Downloading binary payload & executing C++ Huffman Decompression..."):
         try:
-            res = requests.get(f"{API_BASE_URL}/documents/{doc_id}/content", headers=get_auth_headers(), timeout=15)
+            res = requests.get(
+                f"{API_BASE_URL}/documents/{doc_id}/content",
+                headers=get_auth_headers(),
+                timeout=API_REQUEST_TIMEOUT
+            )
             if res.status_code == 200:
                 data = res.json()
                 orig_kb = data["original_size"] / 1024
@@ -157,18 +246,26 @@ def render_rename_modal_content(doc_id: str, current_filename: str):
             except Exception as e:
                 st.error(f"Error connecting to backend: {str(e)}")
 
-# Bind Dialogs safely
-if hasattr(st, "dialog"):
-    @st.dialog("📄 Decompressed Document Content", width="large")
-    def open_view_modal(doc_id: str, filename: str):
-        render_document_modal_content(doc_id, filename)
+@st.dialog("📄 Decompressed Document Content", width="large")
+def open_view_modal(doc_id: str, filename: str):
+    render_document_modal_content(doc_id, filename)
 
-    @st.dialog("✏️ Edit Document Name", width="medium")
-    def open_rename_modal(doc_id: str, current_filename: str):
-        render_rename_modal_content(doc_id, current_filename)
-else:
-    def open_view_modal(doc_id: str, filename: str): pass
-    def open_rename_modal(doc_id: str, current_filename: str): pass
+
+@st.dialog("✏️ Edit Document Name", width="medium")
+def open_rename_modal(doc_id: str, current_filename: str):
+    render_rename_modal_content(doc_id, current_filename)
+
+
+@st.dialog("Code comparison", width="large")
+def open_diff_dialog(diff_payload):
+    render_diff_viewer(
+        diff_payload["source_filename"],
+        diff_payload["source_text"],
+        diff_payload["matched_filename"],
+        diff_payload["matched_text"],
+        set(diff_payload["matched_source_lines"]),
+        set(diff_payload["matched_target_lines"])
+    )
 
 
 # --- ROUTING LOGIC ---
@@ -219,7 +316,7 @@ elif page == "📤 Document Ingestion":
                             f"{API_BASE_URL}/documents/upload",
                             headers=get_auth_headers(),
                             files=files_payload,
-                            timeout=60
+                            timeout=(10, 600)
                         )
                         if response.status_code == 200:
                             data = response.json()
@@ -392,25 +489,33 @@ elif page == "📊 Plagiarism Inspection":
                 f"{documents_by_id[doc_id]['filename']} ({doc_id[:8]})"
             )
         )
+        maximum_matches = max(len(documents) - 1, 1)
         top_k = st.number_input(
             "Maximum number of matches",
             min_value=1,
-            max_value=50,
-            value=10,
+            max_value=maximum_matches,
+            value=maximum_matches,
             step=1
         )
+        st.caption("The default returns all candidate matches. Lower this value to limit results.")
 
         if st.button("Run plagiarism detection", type="primary"):
             st.session_state["detection_result"] = None
             st.session_state["selected_diff"] = None
+            st.session_state["show_diff_dialog"] = False
             st.session_state["detection_error"] = None
-            with st.spinner("Comparing fingerprints against the indexed corpus..."):
+            with st.spinner("Building the fingerprint index and ranking candidates..."):
                 try:
+                    check_payload: dict[str, str | int] = {
+                        "source_doc_id": source_doc_id
+                    }
+                    if top_k < maximum_matches:
+                        check_payload["top_k"] = top_k
                     response = requests.post(
                         f"{API_BASE_URL}/reports/check",
                         headers=get_auth_headers(),
-                        json={"source_doc_id": source_doc_id, "top_k": top_k},
-                        timeout=90
+                        json=check_payload,
+                        timeout=API_REQUEST_TIMEOUT
                     )
                     response.raise_for_status()
                     st.session_state["detection_result"] = response.json()
@@ -444,10 +549,11 @@ elif page == "📊 Plagiarism Inspection":
                             f"{API_BASE_URL}/reports/diff",
                             headers=get_auth_headers(),
                             params={"report_id": match["report_id"]},
-                            timeout=90
+                            timeout=API_DIFF_TIMEOUT
                         )
                         diff_response.raise_for_status()
                         st.session_state["selected_diff"] = diff_response.json()
+                        st.session_state["show_diff_dialog"] = True
                     except requests.exceptions.RequestException as e:
                         detail = e
                         if e.response is not None:
@@ -463,15 +569,9 @@ elif page == "📊 Plagiarism Inspection":
                     st.error(f"Could not load the document diff: {st.session_state['detection_error']}")
 
                 selected_diff = st.session_state["selected_diff"]
-                if selected_diff:
-                    render_diff_viewer(
-                        selected_diff["source_filename"],
-                        selected_diff["source_text"],
-                        selected_diff["matched_filename"],
-                        selected_diff["matched_text"],
-                        set(selected_diff["matched_source_lines"]),
-                        set(selected_diff["matched_target_lines"])
-                    )
+                if selected_diff and st.session_state["show_diff_dialog"]:
+                    st.session_state["show_diff_dialog"] = False
+                    open_diff_dialog(selected_diff)
             elif not detection_result.get("message"):
                 st.info("No matching documents were found in the indexed corpus.")
 
@@ -480,5 +580,69 @@ elif page == "📊 Plagiarism Inspection":
 # -----------------------------------------------------------------------------
 elif page == "🕸️ Collusion Analysis":
     st.title("🕸️ Collusion Network Analysis")
-    st.caption("Disjoint Set Union (DSU) peer-to-peer graph clustering.")
-    render_collusion_graph([], [])
+    st.caption(
+        "Explore groups of documents connected by high-similarity reports. "
+        "Each edge is a saved source-to-match result; DSU groups documents into connected clusters. "
+        "Rebuild reports to compare every document you own, not just documents checked previously."
+    )
+    if st.button("Rebuild reports for all my documents", type="primary"):
+        with st.spinner("Comparing your documents and refreshing graph links..."):
+            try:
+                rebuild_response = requests.post(
+                    f"{API_BASE_URL}/reports/collusion-graph/rebuild",
+                    headers=get_auth_headers(),
+                    timeout=API_REQUEST_TIMEOUT
+                )
+                rebuild_response.raise_for_status()
+                rebuild_summary = rebuild_response.json()
+                st.success(
+                    f"Compared {rebuild_summary['source_documents_compared']} documents; "
+                    f"created {rebuild_summary['reports_created']} links, "
+                    f"updated {rebuild_summary['reports_updated']}, and removed "
+                    f"{rebuild_summary['stale_reports_removed']} stale links."
+                )
+            except requests.exceptions.RequestException as e:
+                detail = e
+                if e.response is not None:
+                    try:
+                        detail = e.response.json().get("detail", e)
+                    except ValueError:
+                        detail = e.response.text or e
+                st.error(f"Could not rebuild document comparisons: {detail}")
+            else:
+                st.rerun()
+
+    threshold = st.slider(
+        "Minimum similarity for a collusion link",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.2,
+        step=0.05,
+        format="%.2f"
+    )
+    try:
+        graph_response = requests.get(
+            f"{API_BASE_URL}/reports/collusion-graph",
+            headers=get_auth_headers(),
+            params={"threshold": threshold},
+            timeout=API_REQUEST_TIMEOUT
+        )
+        graph_response.raise_for_status()
+        graph_data = graph_response.json()
+        st.caption(
+            f"{graph_data.get('num_clusters', 0)} connected cluster(s), "
+            f"{len(graph_data.get('nodes', []))} document(s), "
+            f"{len(graph_data.get('edges', []))} qualifying link(s)."
+        )
+        render_collusion_graph(
+            graph_data.get("nodes", []),
+            graph_data.get("edges", [])
+        )
+    except requests.exceptions.RequestException as e:
+        detail = e
+        if e.response is not None:
+            try:
+                detail = e.response.json().get("detail", e)
+            except ValueError:
+                detail = e.response.text or e
+        st.error(f"Could not load collusion analysis: {detail}")

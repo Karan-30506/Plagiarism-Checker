@@ -71,7 +71,6 @@ def upload_documents(
                 fingerprints=fps
             )
             db.add(db_doc)
-            db.commit()
 
             ingested_records.append({
                 "document_id": str(db_doc.id),
@@ -81,6 +80,8 @@ def upload_documents(
                 "fingerprint_count": len(fps),
                 "storage_path": storage_path
             })
+
+    db.commit()
 
     return {
         "status": "success",

@@ -35,6 +35,7 @@ Pipeline (P3 scope — Part 2):
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from collections import defaultdict
 import uuid
 
 from app.database import get_db
@@ -72,12 +73,66 @@ def _build_corpus_index(
     return corpus
 
 
+def _calculate_fingerprint_similarity_pairs(
+    all_docs: list[Document],
+    source_doc_ids: set[uuid.UUID]
+) -> dict[tuple[uuid.UUID, uuid.UUID], float]:
+    """Calculate all directional Jaccard pairs for selected source documents."""
+    hashes_by_doc: dict[uuid.UUID, set[int]] = {}
+    docs_by_hash: dict[int, list[uuid.UUID]] = defaultdict(list)
+    for doc in all_docs:
+        hashes = {
+            int(fingerprint["hash"])
+            for fingerprint in (doc.fingerprints or [])
+            if isinstance(fingerprint, dict) and "hash" in fingerprint
+        }
+        if not hashes:
+            continue
+        hashes_by_doc[doc.id] = hashes
+        for fingerprint_hash in hashes:
+            docs_by_hash[fingerprint_hash].append(doc.id)
+
+    scores: dict[tuple[uuid.UUID, uuid.UUID], float] = {}
+    for source_doc_id in source_doc_ids:
+        source_hashes = hashes_by_doc.get(source_doc_id, set())
+        if not source_hashes:
+            continue
+
+        intersections: dict[uuid.UUID, int] = defaultdict(int)
+        for fingerprint_hash in source_hashes:
+            for matched_doc_id in docs_by_hash.get(fingerprint_hash, []):
+                if matched_doc_id != source_doc_id:
+                    intersections[matched_doc_id] += 1
+
+        for matched_doc_id, intersection_size in intersections.items():
+            matched_hashes = hashes_by_doc[matched_doc_id]
+            union_size = len(source_hashes) + len(matched_hashes) - intersection_size
+            scores[(source_doc_id, matched_doc_id)] = (
+                intersection_size / union_size if union_size else 0.0
+            )
+    return scores
+
+
+def _deduplicate_similarity_pairs(
+    pairs: list[tuple[str, str, float]]
+) -> list[tuple[str, str, float]]:
+    """Collapse directional reports into one undirected graph edge per pair."""
+    scores_by_pair: dict[tuple[str, str], float] = {}
+    for source_id, matched_id, score in pairs:
+        pair = tuple(sorted((source_id, matched_id)))
+        scores_by_pair[pair] = max(score, scores_by_pair.get(pair, 0.0))
+    return [
+        (source_id, matched_id, score)
+        for (source_id, matched_id), score in scores_by_pair.items()
+    ]
+
+
 # ---------------------------------------------------------------------------
 # POST /api/reports/check
 # ---------------------------------------------------------------------------
 @router.post("/check")
 def check_document(
-    payload: dict,  # { "source_doc_id": "<uuid>", "top_k": 10 }
+    payload: dict,  # { "source_doc_id": "<uuid>", "top_k": 10 (optional) }
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -88,7 +143,7 @@ def check_document(
     Request body:
       {
         "source_doc_id": "uuid-string",
-        "top_k": 10           (optional, default 10)
+        "top_k": 10           (optional; omitted means return all candidates)
       }
 
     Response:
@@ -108,11 +163,12 @@ def check_document(
       }
     """
     source_doc_id_str = payload.get("source_doc_id")
+    raw_top_k = payload.get("top_k")
     try:
-        top_k = int(payload.get("top_k", 10))
+        top_k = int(raw_top_k) if raw_top_k is not None else None
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="top_k must be an integer.")
-    if top_k < 1:
+    if top_k is not None and top_k < 1:
         raise HTTPException(status_code=400, detail="top_k must be greater than zero.")
 
     if not source_doc_id_str:
@@ -158,7 +214,7 @@ def check_document(
         ranked_candidates = query_trie_top_k(
             query_fingerprints=query_fingerprints,
             corpus_index=corpus_index,
-            top_k=top_k
+            top_k=top_k if top_k is not None else len(corpus_index)
         )
     except FileNotFoundError as e:
         raise HTTPException(
@@ -172,6 +228,23 @@ def check_document(
         )
 
     # --- 4. Persist PlagiarismReport rows & enrich with filenames ---
+    candidate_ids = []
+    for candidate in ranked_candidates:
+        try:
+            candidate_ids.append(uuid.UUID(candidate["doc_id"]))
+        except (ValueError, TypeError, AttributeError):
+            continue
+
+    matched_docs = db.query(Document).filter(Document.id.in_(candidate_ids)).all()
+    matched_docs_by_id = {doc.id: doc for doc in matched_docs}
+    existing_reports = db.query(PlagiarismReport).filter(
+        PlagiarismReport.source_doc_id == source_uuid,
+        PlagiarismReport.matched_doc_id.in_(candidate_ids)
+    ).all() if candidate_ids else []
+    existing_reports_by_match = {
+        report.matched_doc_id: report for report in existing_reports
+    }
+
     top_k_response = []
 
     for rank, candidate in enumerate(ranked_candidates, start=1):
@@ -180,34 +253,26 @@ def check_document(
 
         try:
             matched_uuid = uuid.UUID(matched_doc_id_str)
-        except ValueError:
+        except (ValueError, TypeError, AttributeError):
             continue
 
-        matched_doc = db.query(Document).filter(Document.id == matched_uuid).first()
+        matched_doc = matched_docs_by_id.get(matched_uuid)
         if not matched_doc:
             continue
 
-        # Upsert: check if a report already exists for this pair
-        existing_report = db.query(PlagiarismReport).filter(
-            PlagiarismReport.source_doc_id == source_uuid,
-            PlagiarismReport.matched_doc_id == matched_uuid
-        ).first()
-
+        existing_report = existing_reports_by_match.get(matched_uuid)
         if existing_report:
-            # Update score if re-checked
             existing_report.similarity_score = similarity_score
-            db.commit()
             report_id = str(existing_report.id)
         else:
             new_report = PlagiarismReport(
+                id=uuid.uuid4(),
                 source_doc_id=source_uuid,
                 matched_doc_id=matched_uuid,
                 similarity_score=similarity_score,
-                matched_segments=[]    # Filled by P3 (diff engine)
+                matched_segments=[]
             )
             db.add(new_report)
-            db.commit()
-            db.refresh(new_report)
             report_id = str(new_report.id)
 
         top_k_response.append({
@@ -217,6 +282,8 @@ def check_document(
             "similarity_score": round(similarity_score, 4),
             "report_id": report_id
         })
+
+    db.commit()
 
     return {
         "source_doc_id": source_doc_id_str,
@@ -416,10 +483,78 @@ def get_diff(
 # ---------------------------------------------------------------------------
 # GET /api/reports/collusion-graph
 # ---------------------------------------------------------------------------
+@router.post("/collusion-graph/rebuild")
+def rebuild_collusion_reports(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Recompute all current-user document comparisons and refresh saved graph edges."""
+    try:
+        user_uuid = uuid.UUID(str(current_user["id"]))
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid user ID in token.")
+
+    user_docs = db.query(Document).filter(Document.user_id == user_uuid).all()
+    if not user_docs:
+        return {
+            "source_documents_compared": 0,
+            "reports_created": 0,
+            "reports_updated": 0,
+            "stale_reports_removed": 0
+        }
+
+    current_scores = _calculate_fingerprint_similarity_pairs(
+        db.query(Document).all(),
+        {doc.id for doc in user_docs}
+    )
+
+    user_doc_ids = [doc.id for doc in user_docs]
+    saved_reports = db.query(PlagiarismReport).filter(
+        PlagiarismReport.source_doc_id.in_(user_doc_ids)
+    ).all()
+    saved_by_pair = {
+        (report.source_doc_id, report.matched_doc_id): report
+        for report in saved_reports
+    }
+
+    reports_created = 0
+    reports_updated = 0
+    stale_reports_removed = 0
+
+    for pair, report in saved_by_pair.items():
+        score = current_scores.get(pair)
+        if score is None:
+            db.delete(report)
+            stale_reports_removed += 1
+        else:
+            report.similarity_score = score
+            reports_updated += 1
+
+    for pair, score in current_scores.items():
+        if pair not in saved_by_pair:
+            db.add(PlagiarismReport(
+                id=uuid.uuid4(),
+                source_doc_id=pair[0],
+                matched_doc_id=pair[1],
+                similarity_score=score,
+                matched_segments=[]
+            ))
+            reports_created += 1
+
+    db.commit()
+    return {
+        "source_documents_compared": len(user_docs),
+        "reports_created": reports_created,
+        "reports_updated": reports_updated,
+        "stale_reports_removed": stale_reports_removed
+    }
+
+
 @router.get("/collusion-graph")
 def get_collusion_graph(
     threshold: float = Query(
-        0.5, description="Minimum similarity score to merge nodes in DSU"
+        0.2, ge=0.0, le=1.0,
+        description="Minimum similarity score to include and merge collusion links"
     ),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -478,10 +613,14 @@ def get_collusion_graph(
         doc_filename_map[str(doc.id)] = doc.filename
 
     # --- 2. Build pairs list ---
-    pairs: list[tuple[str, str, float]] = [
+    pairs = _deduplicate_similarity_pairs([
         (str(r.source_doc_id), str(r.matched_doc_id), float(r.similarity_score))
         for r in reports
-    ]
+        if float(r.similarity_score) >= threshold
+    ])
+
+    if not pairs:
+        return {"nodes": [], "edges": [], "num_clusters": 0}
 
     # --- 3. Run C++ DSU collusion engine ---
     try:

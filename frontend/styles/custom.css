@@ -1,7 +1,27 @@
 /* Main Page Container */
+:root {
+    color-scheme: dark;
+    --mocha-base: #1e1e2e;
+    --mocha-mantle: #181825;
+    --mocha-crust: #11111b;
+    --mocha-surface: #313244;
+    --mocha-overlay: #45475a;
+    --mocha-text: #cdd6f4;
+    --mocha-subtext: #a6adc8;
+    --mocha-mauve: #cba6f7;
+    --mocha-blue: #89b4fa;
+    --mocha-green: #a6e3a1;
+    --mocha-red: #f38ba8;
+}
+
+html, body, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {
+    background-color: var(--mocha-base) !important;
+    color: var(--mocha-text) !important;
+}
+
 .stApp {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
+    background-color: var(--mocha-base);
+    color: var(--mocha-text);
 }
 
 .main .block-container {
@@ -12,8 +32,106 @@
 
 /* Sidebar Styling */
 section[data-testid="stSidebar"] {
-    background-color: #181825;
-    border-right: 1px solid #313244;
+    background-color: var(--mocha-mantle);
+    border-right: 1px solid var(--mocha-surface);
+}
+
+section[data-testid="stSidebar"] * {
+    color: var(--mocha-text);
+}
+
+[data-testid="stHeader"] {
+    background: rgba(30, 30, 46, 0.9) !important;
+}
+
+[data-testid="stToolbar"], [data-testid="stDecoration"] {
+    background: var(--mocha-base) !important;
+}
+
+[data-testid="stVerticalBlockBorderWrapper"],
+[data-testid="stExpander"],
+[data-testid="stForm"],
+[data-testid="stMetric"],
+[data-testid="stDataFrame"],
+[data-testid="stTable"] {
+    border-color: var(--mocha-surface) !important;
+}
+
+[data-testid="stMetric"] {
+    background: var(--mocha-mantle);
+    border: 1px solid var(--mocha-surface);
+    border-radius: 12px;
+    padding: 14px;
+}
+
+[data-testid="stMetricLabel"], [data-testid="stCaptionContainer"] {
+    color: var(--mocha-subtext) !important;
+}
+
+div[data-baseweb="input"] > div,
+div[data-baseweb="textarea"] > div,
+div[data-baseweb="select"] > div,
+div[data-baseweb="popover"],
+div[data-baseweb="menu"],
+div[data-baseweb="calendar"] {
+    background-color: var(--mocha-mantle) !important;
+    border-color: var(--mocha-surface) !important;
+    color: var(--mocha-text) !important;
+}
+
+input, textarea {
+    color: var(--mocha-text) !important;
+    caret-color: var(--mocha-mauve) !important;
+}
+
+[data-testid="stTextInput"] label,
+[data-testid="stTextArea"] label,
+[data-testid="stSelectbox"] label,
+[data-testid="stSlider"] label,
+[data-testid="stNumberInput"] label {
+    color: var(--mocha-text) !important;
+}
+
+[data-testid="stButton"] button,
+[data-testid="stFormSubmitButton"] button {
+    background: var(--mocha-surface) !important;
+    border: 1px solid var(--mocha-overlay) !important;
+    color: var(--mocha-text) !important;
+    border-radius: 8px !important;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+[data-testid="stButton"] button:hover,
+[data-testid="stFormSubmitButton"] button:hover {
+    border-color: var(--mocha-mauve) !important;
+    color: var(--mocha-mauve) !important;
+}
+
+[data-testid="stTabs"] [role="tab"] {
+    color: var(--mocha-subtext) !important;
+}
+
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] {
+    color: var(--mocha-mauve) !important;
+}
+
+[data-testid="stProgressBar"] > div > div {
+    background-color: var(--mocha-mauve) !important;
+}
+
+[data-testid="stAlert"] {
+    background-color: var(--mocha-mantle) !important;
+    border-color: var(--mocha-surface) !important;
+    color: var(--mocha-text) !important;
+}
+
+a {
+    color: var(--mocha-blue) !important;
+}
+
+code, pre, kbd {
+    background-color: var(--mocha-crust) !important;
+    color: var(--mocha-text) !important;
 }
 
 /* Catppuccin Metric Cards */
@@ -169,6 +287,44 @@ pre code .line-numbers-rows > span {
 
 .token.variable, .token.property, .token.parameter {
     color: #f2cdcd !important;
+}
+
+div[data-testid="stCodeBlock"] .hljs-comment,
+div[data-testid="stCodeBlock"] .hljs-quote {
+    color: #6c7086 !important;
+    font-style: italic;
+}
+
+div[data-testid="stCodeBlock"] .hljs-keyword,
+div[data-testid="stCodeBlock"] .hljs-selector-tag,
+div[data-testid="stCodeBlock"] .hljs-meta {
+    color: #cba6f7 !important;
+}
+
+div[data-testid="stCodeBlock"] .hljs-string,
+div[data-testid="stCodeBlock"] .hljs-template-variable,
+div[data-testid="stCodeBlock"] .hljs-addition {
+    color: #a6e3a1 !important;
+}
+
+div[data-testid="stCodeBlock"] .hljs-title,
+div[data-testid="stCodeBlock"] .hljs-function {
+    color: #89b4fa !important;
+}
+
+div[data-testid="stCodeBlock"] .hljs-type,
+div[data-testid="stCodeBlock"] .hljs-built_in,
+div[data-testid="stCodeBlock"] .hljs-attribute {
+    color: #f9e2af !important;
+}
+
+div[data-testid="stCodeBlock"] .hljs-number,
+div[data-testid="stCodeBlock"] .hljs-literal {
+    color: #fab387 !important;
+}
+
+div[data-testid="stCodeBlock"] .hljs-deletion {
+    color: #f38ba8 !important;
 }
 
 /* Catppuccin Badges */
