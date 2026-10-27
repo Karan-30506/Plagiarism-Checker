@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cctype>
 
+// c9 * 31^9 + c8 * 31^8 .... c0 * 31^0 -- Hash Function
 uint64_t WinnowingEngine::compute_hash(const std::string& str, int start, int length) {
     uint64_t hash = 0;
     for (int i = 0; i < length; ++i) {
@@ -34,6 +35,7 @@ std::vector<Fingerprint> WinnowingEngine::generate_fingerprints(
     hashes[0] = compute_hash(text, 0, k);
 
     // Rolling hash calculation for subsequent k-grams
+    // Hi = (Hi-1 - cprev * 31^9) + cnext * 31^0
     for (int i = 1; i < num_grams; ++i) {
         uint64_t prev_char = static_cast<unsigned char>(text[i - 1]);
         uint64_t next_char = static_cast<unsigned char>(text[i + k - 1]);

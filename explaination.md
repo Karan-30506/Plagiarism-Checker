@@ -151,10 +151,10 @@ The position is retained in storage, but the current candidate-matching and rank
 
 ### What is stored where?
 
-| Data | Location | Purpose |
-|---|---|---|
-| Extracted original text, Huffman-compressed | Supabase Storage, `compressed_docs` | Reconstruct text for viewing and diffing |
-| Owner, filename, storage path, sizes, fingerprint JSON | PostgreSQL `documents` table | Document metadata and detection input |
+| Data                                                       | Location                                | Purpose                                       |
+| ---------------------------------------------------------- | --------------------------------------- | --------------------------------------------- |
+| Extracted original text, Huffman-compressed                | Supabase Storage, `compressed_docs`   | Reconstruct text for viewing and diffing      |
+| Owner, filename, storage path, sizes, fingerprint JSON     | PostgreSQL `documents` table          | Document metadata and detection input         |
 | Directional source-to-candidate score and matched segments | PostgreSQL `plagiarism_reports` table | Persist detection results and later diff data |
 
 The ORM definitions are in [`backend/app/models.py`](./backend/app/models.py); the SQL schema reference is in [`database/schema.sql`](./database/schema.sql).
@@ -178,12 +178,12 @@ The bridge writes temporary query and corpus files, invokes `plagiarism_cli quer
 
 ### What each data structure does
 
-| Algorithm or structure | Current role |
-|---|---|
-| **Winnowing** | Reduces normalized text to selected k-gram fingerprints during upload. |
-| **Compressed radix trie** | Indexes corpus hash values for exact hash lookup. Each hash is formatted as a fixed-width 16-character hexadecimal key; terminal nodes track document IDs containing that hash. |
-| **Max-binomial heap** | Keeps the highest-scoring candidates and extracts up to the requested Top-K. |
-| **Python temporary-file bridge** | Transfers fingerprints and results between FastAPI and the C++ executable. |
+| Algorithm or structure                 | Current role                                                                                                                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Winnowing**                    | Reduces normalized text to selected k-gram fingerprints during upload.                                                                                                          |
+| **Compressed radix trie**        | Indexes corpus hash values for exact hash lookup. Each hash is formatted as a fixed-width 16-character hexadecimal key; terminal nodes track document IDs containing that hash. |
+| **Max-binomial heap**            | Keeps the highest-scoring candidates and extracts up to the requested Top-K.                                                                                                    |
+| **Python temporary-file bridge** | Transfers fingerprints and results between FastAPI and the C++ executable.                                                                                                      |
 
 The trie implementation is in [`backend/cpp_engine/src/compressed_trie.cpp`](./backend/cpp_engine/src/compressed_trie.cpp), while query orchestration is in [`backend/cpp_engine/main_cli.cpp`](./backend/cpp_engine/main_cli.cpp). The heap implementation is in [`backend/cpp_engine/src/binomial_heap.cpp`](./backend/cpp_engine/src/binomial_heap.cpp).
 
@@ -251,16 +251,16 @@ Also, the endpoint starts from reports whose source document belongs to the curr
 
 [`strucutre.md`](./strucutre.md) describes the planned project layout and data-structure responsibilities. The main intended concepts are present, but the active implementation differs in several important details:
 
-| Area | Intended or described | Current behavior |
-|---|---|---|
-| Ingestion | Extract, compress, fingerprint, and persist a document | Implemented for supported file types; Storage upload failure is warned about but does not stop the DB insert. |
-| Huffman | Cold/archive compression | Implemented for extracted raw text; compressed blob is stored in Supabase Storage. |
-| Winnowing | Rolling-hash fingerprint selection | Implemented with defaults `k=10`, `w=4`; fingerprints are stored in PostgreSQL JSONB. |
-| Trie index | “Hot” compressed-trie hash index | Trie is rebuilt from all other documents on each query; it is not persisted between requests. |
-| Top-K | Rank candidate documents | Implemented using a max-binomial heap and Jaccard similarity over distinct fingerprint hashes. |
-| KMP diff | KMP-based line alignment | KMP search exists, but the active line alignment uses exact trimmed-line hash-map lookup. |
-| Suffix structure | “Suffix tree” / suffix-array terminology | The active implementation is a generalized suffix array with LCP processing, not a suffix tree. |
-| Collusion graph | DSU clusters visualized in the UI | The UI fetches the API, renders qualifying links, and lets the user adjust the threshold. |
+| Area             | Intended or described                                  | Current behavior                                                                                              |
+| ---------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| Ingestion        | Extract, compress, fingerprint, and persist a document | Implemented for supported file types; Storage upload failure is warned about but does not stop the DB insert. |
+| Huffman          | Cold/archive compression                               | Implemented for extracted raw text; compressed blob is stored in Supabase Storage.                            |
+| Winnowing        | Rolling-hash fingerprint selection                     | Implemented with defaults `k=10`, `w=4`; fingerprints are stored in PostgreSQL JSONB.                     |
+| Trie index       | “Hot” compressed-trie hash index                     | Trie is rebuilt from all other documents on each query; it is not persisted between requests.                 |
+| Top-K            | Rank candidate documents                               | Implemented using a max-binomial heap and Jaccard similarity over distinct fingerprint hashes.                |
+| KMP diff         | KMP-based line alignment                               | KMP search exists, but the active line alignment uses exact trimmed-line hash-map lookup.                     |
+| Suffix structure | “Suffix tree” / suffix-array terminology             | The active implementation is a generalized suffix array with LCP processing, not a suffix tree.               |
+| Collusion graph  | DSU clusters visualized in the UI                      | The UI fetches the API, renders qualifying links, and lets the user adjust the threshold.                     |
 
 ## 6. Practical limitations to remember
 

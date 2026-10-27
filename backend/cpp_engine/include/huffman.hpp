@@ -12,7 +12,7 @@
 struct HuffmanNode {
     unsigned char symbol;
     uint64_t frequency;
-    unsigned char min_symbol; // Deterministic tie-breaker for equal frequencies
+    unsigned char min_symbol; // tie-breaker for equal frequencies
     std::shared_ptr<HuffmanNode> left;
     std::shared_ptr<HuffmanNode> right;
 
